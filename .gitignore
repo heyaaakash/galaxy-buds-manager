@@ -1,0 +1,32 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+
+# Build outputs / packaging
+*.app
+*.dmg
+*.pkg
+*.ipa
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor / tooling
+.vscode/
+.idea/
+*.swp
+
+# Local/private project files
+.freebuff/
+
+# Logs
+*.log
