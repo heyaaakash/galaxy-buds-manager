@@ -1,174 +1,47 @@
-# Galaxy Buds2 Pro Protocol Capability Matrix
+# Buds2 Pro compatibility and validation
 
-> **Model**: Samsung Galaxy Buds2 Pro (SM-R510)  
-> **Bluetooth Version**: 5.3  
-> **Protocol**: Classic Bluetooth SPP (RFCOMM) with binary framing  
-> **Reference**: [GalaxyBudsClient](https://github.com/timschneeb/GalaxyBudsClient) (GPLv3 — used as reference only, not copied)
+Target: Samsung SM-R510, macOS 14+. The device's extended-status revision determines optional fields; unknown newer tails are ignored and truncated mandatory fields are rejected.
 
-## Packet Format
+## Implemented controls
 
-```
-┌─────┬──────────┬─────────┬─────────┬──────────┬─────┐
-│ SOM │ Header   │ MsgID   │ Payload │ CRC16    │ EOM │
-│ 1B  │ 2B       │ 1B      │ N bytes │ 2B       │ 1B  │
-│ 0xFD│          │         │         │ CCITT    │ 0xDD│
-└─────┴──────────┴─────────┴─────────┴──────────┴─────┘
-```
+| Capability | Implementation / limits |
+|---|---|
+| Detection | Paired Buds2 Pro names, saved address, macOS connect notification; no pairing bypass |
+| Connection | Samsung configuration-service UUID via SDP; asynchronous channel opening with timeout and stale-callback rejection |
+| Automatic reconnect | Startup, unexpected disconnect, Bluetooth power-on, wake; bounded exponential delay; respects saved setting and manual disconnect |
+| Battery | L/R/case, unavailable levels shown as unknown; charging from extended revision 11+ or basic status revision 1+ |
+| Noise control | Off / ANC / ambient; universal ACK or matching noise notification confirms a change |
+| Ambient | Base volume 0–2; extra-high option revision 13+, extra step 3; customization per side and tone |
+| Equalizer | Normal, Bass Boost, Soft, Dynamic, Clear, Treble Boost |
+| Balance | 0–32, center 16 |
+| Touch | Modern multi-byte lock payload preserving gesture flags, valid long-press mapping, per-tap/call flags, edge double-tap volume |
+| Voice Detect | Enable, 5/10/15-second duration, confirmed by device |
+| Calls | Sidetone; extra clear call sound revision 13+ |
+| Seamless connection | Inverted wire boolean; effect depends on connected hosts |
+| Gaming setting | Uses adjust-sound-sync command; does not change the Mac's codec support |
+| Ringing | Start/stop/mute, no in-ear start, stop on leaving its screen |
+| Fit test | Start/stop payloads, good/bad/error decode, 20-second timeout and both-ear requirement |
+| Information | Compact firmware decode, fixed-width earbud/cradle serials, colors, raw diagnostics, cycle counts |
+| Device actions | Reset/reboot/power off require explicit UI confirmation; not automatically retried |
+| Logs | Synchronized bounded storage, text/JSON export, RX-only replay extraction |
 
-- **SOM**: Start of Message = `0xFD`
-- **Header**: 2 bytes — 11-bit payload size, response flag, fragment flag
-- **CRC16**: CRC-CCITT over `[MsgID] + [Payload]`, init=0xFFFF, poly=0x1021
+## Not implemented as Mac features
 
-## Feature Support (Buds2 Pro)
+Firmware updates, alternate-protocol rename, Samsung 360 Audio rendering/head tracking integration, Samsung Seamless Codec, phone notification reading, and SmartThings cloud location finding. Adaptive-volume/custom-EQ capability claims from other Buds models do not establish SM-R510 support. Those are not exposed as working controls.
 
-| Feature | Supported | Min FW Rev | Notes |
-|---------|-----------|------------|-------|
-| Noise Control (ANC/Ambient/Off) | ✅ | — | 3 modes |
-| ANC with One Earbud | ✅ | — | |
-| Ambient Sound | ✅ | — | Max volume = 2 |
-| Ambient Extra Loud | ✅ | Rev 13 | |
-| Ambient Sidetone | ✅ | Rev 1 | |
-| Ambient Customize (3-band) | ✅ | — | |
-| Equalizer (5 presets) | ✅ | — | Bass Boost, Soft, Dynamic, Clear, Treble Boost |
-| Custom Equalizer | ✅ | — | Per-band curve |
-| Touchpad Lock | ✅ | — | |
-| Advanced Touch Lock | ✅ | — | |
-| Touch Lock for Calls | ✅ | Rev 1 | |
-| Long-Press Actions | ✅ | — | Voice Assistant, Volume, Ambient, Noise Control |
-| Find My Earbuds | ✅ | — | Beep sound + mute control |
-| Spatial Audio | ✅ | — | With head tracking |
-| Head Tracking | ✅ | Rev 8 | |
-| Game Mode (Low Latency) | ✅ | — | |
-| Detect Conversations | ✅ | — | |
-| Sidetone (Calls) | ✅ | — | |
-| In-Band Ringtone | ✅ | — | |
-| Voice Notification | ✅ | — | |
-| Bixby Wake-Up | ✅ | — | |
-| Auto Adjust Sound | ✅ | Rev 3 | |
-| Adaptive Volume | ✅ | — | |
-| Adaptive EQ | ✅ | — | |
-| Seamless Connection | ✅ | — | |
-| Stereo Pan | ✅ | — | |
-| Double Tap Volume | ✅ | — | |
-| Extra Clear Call Sound | ✅ | Rev 13 | |
-| Call Path Control | ✅ | Rev 1 | |
-| Pause Media on Removal | ✅ | — | |
-| Charging State | ✅ | Rev 11 | |
-| Case Battery | ✅ | — | |
-| Device Color | ✅ | — | |
-| Rename | ✅ | — | |
-| Cradle Serial Number | ✅ | — | |
-| SmartThings Find | ✅ | — | |
-| Usage Report | ✅ | — | |
-| Firmware Updates (FOTA) | ⚠️ | — | Complex protocol, needs empirical testing |
-| Debug Data | ✅ | — | Serial number, build info, SKU |
-| Factory Reset | ✅ | — | Destructive! |
-| Reboot | ✅ | — | |
-| Multipoint | ✅ | — | Multi-device connection |
+## Validation performed on 2026-09-18
 
-## Readable Commands
+The locally built app connected over channel 27 to physical Buds2 Pro reporting extended-status revision 14. Live left/right/case battery and settings populated the menu. EQ Soft → Dynamic → Soft and Voice Detect off → on → off were confirmed by device acknowledgements. ANC enable was acknowledged; the initial Off request lacked a direct ACK, motivating support for matching noise-status confirmation. No reset, reboot, firmware flashing, or power-off was executed.
 
-These commands can be sent to request data from the device:
+Automated tests cover packet correctness, revision layouts/truncation, fit-result semantics, modern touch payloads, clamping, session reset, unknown IDs, JSON/replay, queue replacement/retry cleanup, and notification matching. This is not evidence that every firmware revision or every additional control has been physically tested. Sleep/wake across hardware and OS versions, custom ambient, balance, touch gesture edits, ringing, and destructive commands need additional device validation.
 
-| MsgID | Name | Response | Notes |
-|-------|------|----------|-------|
-| 0x63 | VERSION_INFO | Firmware version string | Short format |
-| 0x68 | VERSION_INFO_LONG | Firmware version string | Extended format |
-| 0x29 | DEBUG_SERIAL_NUMBER | Serial numbers (L/R) | |
-| 0x28 | DEBUG_BUILD_INFO | Build info strings | |
-| 0x22 | DEBUG_SKU | SKU data | May return zeros |
-| 0x26 | DEBUG_GET_ALL_DATA | All sensor data | Debug only |
-| 0x24 | DEBUG_GET_VERSION | Version data | |
-| 0x94 | BATTERY_TYPE | Battery type strings | May return zeros |
-| 0xAB | SELF_TEST | Self-test results | Disconnects buds! |
-| 0x9D | CHECK_FIT_OF_EARBUDS | Fit check result | |
-| 0xD9 | ADAPTIVE_EQ_STATUS | Adaptive EQ state | |
+## Wire details
 
-## Writable Commands
+- Standard frame: `FD`, two-byte size/flags, raw message ID, payload, little-endian CRC, `DD`.
+- CRC polynomial `0x1021`, initial value **0**; covers ID plus payload. Corrupt frames are rejected.
+- Universal command acknowledgement ID: `0x42`; its first payload byte identifies the acknowledged command.
+- Extended status `0x61` is model-specific. Buds2 Pro battery offsets are 2/3/7, EQ 9, packed touch flags/actions 10/11, and noise mode 12.
+- Basic status `0x60` battery offsets are 1/2/6. The two layouts must not be confused.
+- Fit result 1 means good, 0 means poor, 2 means test failed.
 
-These commands send configuration to the device:
-
-| MsgID | Name | Payload | Response |
-|-------|------|---------|----------|
-| 0x88 | MANAGER_INFO | App info (3 bytes) | None |
-| 0xA7 | UPDATE_TIME | Timestamp (12 bytes) | None |
-| 0x78 | NOISE_CONTROLS | Mode byte (0/1/2) | Update notification |
-| 0x80 | SET_AMBIENT_MODE | Enable byte | Update notification |
-| 0x84 | AMBIENT_VOLUME | Volume (0-2) | Update notification |
-| 0x82 | CUSTOMIZE_AMBIENT | 3-band levels | |
-| 0x83 | NOISE_REDUCTION_LEVEL | Level byte | |
-| 0x96 | EXTRA_HIGH_AMBIENT | Enable byte | |
-| 0x86 | EQUALIZER | Preset (0-5) | |
-| 0x89 | CUSTOM_EQUALIZE_SEND | EQ curve data | |
-| 0x90 | LOCK_TOUCHPAD | Enable byte | Update notification |
-| 0x92 | SET_TOUCHPAD_OPTION | Left/Right actions | Update notification |
-| 0xA0 | FIND_MY_EARBUDS_START | None | |
-| 0xA1 | FIND_MY_EARBUDS_STOP | None | |
-| 0xA2 | MUTE_EARBUD | Left/Right mute | Status update |
-| 0x7C | SET_SPATIAL_AUDIO | Enable byte | |
-| 0x87 | GAME_MODE | Enable byte | |
-| 0x7A | SET_DETECT_CONVERSATIONS | Enable byte | |
-| 0x8B | SET_SIDETONE | Enable byte | |
-| 0x8A | SET_IN_BAND_RINGTONE | Enable byte | |
-| 0xA4 | VOICE_NOTI_STATUS | Enable byte | |
-| 0xC5 | SET_ADAPTIVE_VOLUME | Enable byte | |
-| 0x50 | RESET | None | DESTRUCTIVE |
-| 0x52 | REBOOT | None | |
-| 0x53 | POWEROFF | None | |
-
-## Protocol Flow
-
-### Connection Sequence
-
-```
-1. macOS connects to device via RFCOMM (SPP UUID)
-2. Device automatically sends EXTENDED_STATUS_UPDATED (0x61)
-3. Client sends MANAGER_INFO (0x88) as acknowledgement/handshake
-4. Client sends UPDATE_TIME (0xA7) to sync clock
-5. Client optionally requests VERSION_INFO, SERIAL_NUMBER
-6. Connection is ready for commands
-```
-
-### Status Update Response
-
-The client must respond to `EXTENDED_STATUS_UPDATED` with:
-1. A zero-byte response (ACK) with the same message ID
-2. Followed by `MANAGER_INFO` with client type information
-
-## macOS Limitations
-
-| Capability | Status | Notes |
-|-----------|--------|-------|
-| RFCOMM/SPP | ✅ via IOBluetooth | Not available in CoreBluetooth (BLE only) |
-| Device Discovery | ✅ via CoreBluetooth | BLE scanning works for finding devices |
-| Pairing | ⚠️ System Settings | Must pair manually first in System Settings |
-| A2DP Audio | ✅ System-level | Handled by macOS Bluetooth stack automatically |
-| BLE GATT | ⚠️ Limited | Samsung uses classic SPP, not BLE GATT |
-| Sandbox | ⚠️ Limited | IOBluetooth has sandbox restrictions |
-| Launch at Login | ⚠️ Manual | Requires SMLoginItemSetEnabled or LaunchAgent |
-
-## Uncertain / Needs Testing
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| FOTA (Firmware Update) | Unknown | Complex multi-step protocol |
-| Custom Ambient Curve | Needs testing | Exact payload format unclear |
-| Multipoint control | Needs testing | May need newer FW |
-| Adaptive EQ details | Needs testing | Payload format undocumented |
-| Spatial Audio data stream | Needs testing | Continuous head tracking data |
-| Hidden debug commands | Needs testing | 0x12, 0x13, etc. |
-
-## Debugging
-
-Use the built-in protocol logger (Debug Log tab) to:
-1. Capture all raw protocol traffic
-2. Export logs as text or JSON
-3. Replay captured packets for testing
-4. Verify command responses
-
-All commands are logged with:
-- Timestamp (ms precision)
-- Direction (TX/RX)
-- Message ID (human-readable name)
-- Payload hex dump
-- Decoded fields (where applicable)
+Reference: [GalaxyBudsClient source](https://github.com/timschneeb/GalaxyBudsClient/tree/master/GalaxyBudsClient). Implementations here were written for this Swift app using protocol facts checked against that reference and local device traffic.

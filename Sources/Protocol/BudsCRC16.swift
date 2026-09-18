@@ -2,7 +2,7 @@
 // CRC16-CCITT checksum used by Samsung Galaxy Buds SPP protocol.
 //
 // The CRC is computed over: [messageId] + [payload bytes].
-// The polynomial is x^16 + x^12 + x^5 + 1 (0x1021), init value 0xFFFF.
+// The polynomial is x^16 + x^12 + x^5 + 1 (0x1021), init value 0x0000.
 //
 // Reference: https://gist.github.com/ThePBone/435b625418945592d7a0a3f04adc67b0
 
@@ -32,7 +32,7 @@ enum BudsCRC16 {
     /// - Parameter data: Raw bytes to checksum.
     /// - Returns: 16-bit CRC value.
     static func compute(_ data: [UInt8]) -> UInt16 {
-        var crc: UInt16 = 0xFFFF
+        var crc: UInt16 = 0x0000
         for byte in data {
             let idx = Int((crc >> 8) ^ UInt16(byte))
             crc = (crc << 8) ^ table[idx & 0xFF]

@@ -37,9 +37,8 @@ enum BudsConstants {
     /// Samsung's standard SPP UUID for newer models (Buds2 Pro, Buds FE, etc.)
     static let sppUuid = "00001101-0000-1000-8000-00805F9B34FB"
 
-    /// Samsung's custom SPP UUID for newer buds (alternative/unknown at this time;
-    /// may need empirical testing — using standard SPP as default).
-    static let sppNewUuid = "00001101-0000-1000-8000-00805F9B34FB"
+    /// Buds2 Pro configuration service, advertised through classic Bluetooth SDP.
+    static let sppNewUuid = "2E73A4AD-332D-41FC-90E2-16BEF06523F2"
 
     /// Maximum payload size for non-fragmented messages.
     static let maxPayloadSize = 256

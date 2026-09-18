@@ -27,6 +27,14 @@ struct EqualizerSheet: View {
                 .buttonStyle(.plain)
             }
 
+            GroupBox("Left / Right Balance") {
+                Slider(value: Binding(
+                    get: { Double(appState.deviceState.stereoBalance) },
+                    set: { value in Task { await appState.setStereoBalance(Int(value)) } }
+                ), in: 0...32, step: 1)
+                HStack { Text("Left"); Spacer(); Button("Center") { Task { await appState.setStereoBalance(16) } }; Spacer(); Text("Right") }
+                    .font(.caption)
+            }
             Divider()
 
             Toggle("Game Mode (Low Latency)", isOn: Binding(

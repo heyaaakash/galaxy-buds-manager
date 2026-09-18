@@ -9,11 +9,6 @@ struct FitTestSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Fit Test").font(.headline)
-                Spacer()
-                Button("Done") { dismiss() }.buttonStyle(.bordered).controlSize(.small)
-            }
 
             Text("Checks the seal of each earbud in your ear.")
                 .font(.caption).foregroundStyle(.secondary)
@@ -23,6 +18,13 @@ struct FitTestSheet: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
+
+            .disabled(appState.deviceState.fitTestRunning || appState.deviceState.wearingLeft != .wearing || appState.deviceState.wearingRight != .wearing)
+
+            if appState.deviceState.fitTestRunning {
+                HStack { ProgressView().controlSize(.small); Text("Checking seal…") }
+                Button("Cancel Test") { Task { await appState.stopFitTest() } }
+            }
 
             if let result = appState.deviceState.fitTestResult {
                 Divider()
@@ -46,5 +48,8 @@ struct FitTestSheet: View {
         }
         .padding(16)
         .frame(width: 320)
+        .onDisappear {
+            if appState.deviceState.fitTestRunning { Task { await appState.stopFitTest() } }
+        }
     }
 }

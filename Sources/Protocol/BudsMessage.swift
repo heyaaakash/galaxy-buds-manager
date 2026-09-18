@@ -11,6 +11,7 @@ import Foundation
 struct BudsMessage: CustomStringConvertible, Sendable {
     /// The message ID.
     let id: BudsMessageId
+    let rawID: UInt8
 
     /// Request or Response.
     let type: BudsMessageType
@@ -36,7 +37,7 @@ struct BudsMessage: CustomStringConvertible, Sendable {
 
     /// Computed CRC16 over (messageId + payload).
     var crc16: UInt16 {
-        return BudsCRC16.compute(messageId: id, payload: payload)
+        return BudsCRC16.compute([rawID] + payload)
     }
 
     // MARK: - Initialization
@@ -46,9 +47,11 @@ struct BudsMessage: CustomStringConvertible, Sendable {
         type: BudsMessageType = .request,
         payload: [UInt8] = [],
         isFragment: Bool = false,
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        rawID: UInt8? = nil
     ) {
         self.id = id
+        self.rawID = rawID ?? id.rawValue
         self.type = type
         self.payload = payload
         self.isFragment = isFragment
@@ -65,6 +68,7 @@ struct BudsMessage: CustomStringConvertible, Sendable {
         packet.append(BudsConstants.som)
 
         // Header (2 bytes)
+        precondition(headerPayloadSize <= 0x7FF, "SPP payload exceeds the wire header size")
         let header = BudsMessageHeader(
             payloadSize: headerPayloadSize,
             isResponse: type == .response,
@@ -73,7 +77,7 @@ struct BudsMessage: CustomStringConvertible, Sendable {
         packet.append(contentsOf: header.encode())
 
         // Message ID
-        packet.append(id.rawValue)
+        packet.append(rawID)
 
         // Payload
         packet.append(contentsOf: payload)
@@ -90,7 +94,7 @@ struct BudsMessage: CustomStringConvertible, Sendable {
     // MARK: - Decoding
 
     static func isValidSom(_ byte: UInt8) -> Bool {
-        return byte == BudsConstants.som || byte == BudsConstants.legacySom || byte == BudsConstants.smepSom
+        return byte == BudsConstants.som
     }
 
     static func matchingEom(for som: UInt8) -> UInt8 {
@@ -127,7 +131,8 @@ struct BudsMessage: CustomStringConvertible, Sendable {
 
         // Message ID
         guard offset < data.count else { return nil }
-        let msgId = BudsMessageId.from(data[offset])
+        let rawID = data[offset]
+        let msgId = BudsMessageId.from(rawID)
         offset += 1
 
         // Payload size from header = msgId(1) + payload + CRC(2)
@@ -149,8 +154,9 @@ struct BudsMessage: CustomStringConvertible, Sendable {
         offset += 2
 
         // Verify CRC
-        if !BudsCRC16.verify(messageId: msgId, payload: payload, receivedCRC: crcBytes) {
+        if BudsCRC16.encode(BudsCRC16.compute([rawID] + payload)) != crcBytes {
             ProtocolLogger.log(.warning, "CRC mismatch for message \(msgId)")
+            return nil
         }
 
         // EOM
@@ -163,7 +169,8 @@ struct BudsMessage: CustomStringConvertible, Sendable {
             type: header.isResponse ? .response : .request,
             payload: payload,
             isFragment: header.isFragment,
-            timestamp: Date()
+            timestamp: Date(),
+            rawID: rawID
         )
     }
 

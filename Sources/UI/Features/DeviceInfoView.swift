@@ -38,7 +38,7 @@ struct DeviceInfoSheet: View {
             }
         }
         .padding(16)
-        .frame(width: 340)
+        .frame(width: 320)
     }
 
     private func infoRow(_ label: String, _ value: String) -> some View {

@@ -3,6 +3,7 @@
 // Shows real-time protocol traffic with hex dumps and allows export/replay.
 
 import SwiftUI
+import Combine
 
 // MARK: - Debug View
 
@@ -157,7 +158,7 @@ struct DebugView: View {
     // MARK: - Helpers
 
     private func refreshEntries() {
-        logEntries = ProtocolLogger.cachedEntries
+        logEntries = ProtocolLogger.getAllEntries()
     }
 
     private var filteredEntries: [ProtocolLogEntry] {
@@ -216,22 +217,5 @@ struct DebugView: View {
         }
         .padding()
         .frame(width: 700, height: 500)
-    }
-}
-
-// MARK: - Static Cache for Non-Sendable Access
-
-/// ProtocolLogger is an actor, so we maintain a simple static cache for SwiftUI views.
-extension ProtocolLogger {
-    /// Cached entries for SwiftUI display (updated periodically).
-    nonisolated(unsafe) static var cachedEntries: [ProtocolLogEntry] = []
-
-    nonisolated static func setupCache() {
-        onEntry = { entry in
-            cachedEntries.append(entry)
-            if cachedEntries.count > maxEntries {
-                cachedEntries.removeFirst(cachedEntries.count - maxEntries)
-            }
-        }
     }
 }

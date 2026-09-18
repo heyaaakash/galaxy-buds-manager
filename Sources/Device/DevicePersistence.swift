@@ -45,7 +45,7 @@ enum DevicePersistence {
     // MARK: - Preferences
 
     static var autoReconnect: Bool {
-        get { UserDefaults.standard.bool(forKey: Keys.autoReconnect) }
+        get { (UserDefaults.standard.object(forKey: Keys.autoReconnect) as? Bool) ?? true }
         set { UserDefaults.standard.set(newValue, forKey: Keys.autoReconnect) }
     }
 
@@ -66,23 +66,15 @@ enum DevicePersistence {
             }
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: Keys.launchAtLogin)
-            if #available(macOS 13.0, *) {
-                do {
-                    if newValue {
-                        if SMAppService.mainApp.status != .enabled {
-                            try SMAppService.mainApp.register()
-                        }
-                    } else {
-                        if SMAppService.mainApp.status == .enabled {
-                            try SMAppService.mainApp.unregister()
-                        }
-                    }
-                } catch {
-                    ProtocolLogger.log(.warning, "Could not update SMAppService launchAtLogin: \(error.localizedDescription)")
-                }
-            }
+            do { try updateLaunchAtLogin(newValue) }
+            catch { ProtocolLogger.log(.warning, "Could not update launch at login: \(error.localizedDescription)") }
         }
+    }
+
+    static func updateLaunchAtLogin(_ enabled: Bool) throws {
+        if enabled { try SMAppService.mainApp.register() }
+        else { try SMAppService.mainApp.unregister() }
+        UserDefaults.standard.set(enabled, forKey: Keys.launchAtLogin)
     }
 
     static var debugLogging: Bool {

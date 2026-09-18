@@ -19,10 +19,8 @@ struct DiscoveredDevice: Identifiable {
 
     static func isGalaxyBudsName(_ name: String) -> Bool {
         let lower = name.lowercased()
-        return lower.contains("galaxy bud") ||
-               lower.contains("buds") ||
-               lower.contains("sm-r510") ||
-               lower.contains("sm-r51")
+        let compact = lower.replacingOccurrences(of: " ", with: "")
+        return compact.contains("buds2pro") || lower.contains("sm-r510")
     }
 }
 
@@ -36,6 +34,7 @@ final class BluetoothManager: NSObject, ObservableObject {
     @Published var isScanning = false
     @Published var discoveredDevices: [DiscoveredDevice] = []
     @Published var connectionState: ConnectionState = .disconnected
+    @Published var isBluetoothAvailable = false
     @Published var bluetoothPermissionGranted = false
     @Published var statusMessage: String = ""
 
@@ -49,7 +48,8 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var connectedDevice: IOBluetoothDevice?
     private let rfcommQueue = DispatchQueue(label: "com.galaxybuds.rfcomm", qos: .userInitiated)
     private var isConnecting = false
-    nonisolated(unsafe) private var cancelRequested = false
+    private var cancelRequested = false
+    private var attemptGeneration = 0
 
     // MARK: - Callbacks
 
@@ -133,16 +133,23 @@ final class BluetoothManager: NSObject, ObservableObject {
     private func handleBluetoothState(_ state: CBManagerState) {
         switch state {
         case .poweredOn:
+            isBluetoothAvailable = true
             bluetoothPermissionGranted = true
             ProtocolLogger.log(.info, "Bluetooth powered on — CoreBluetooth ready")
             onBluetoothPoweredOn?()
         case .poweredOff:
-            ProtocolLogger.log(.warning, "Bluetooth powered off (RFCOMM may still work)")
+            isBluetoothAvailable = false
+            disconnect()
+            setStatus("Bluetooth is off. Turn it on in System Settings.")
         case .unauthorized:
-            ProtocolLogger.log(.warning, "CoreBluetooth unauthorized (not needed for RFCOMM)")
+            isBluetoothAvailable = false
+            bluetoothPermissionGranted = false
+            setStatus("Allow Bluetooth access in System Settings → Privacy & Security → Bluetooth.")
         case .unsupported:
             ProtocolLogger.log(.warning, "CoreBluetooth unsupported (not needed for RFCOMM)")
         case .resetting:
+            isBluetoothAvailable = false
+            disconnect()
             ProtocolLogger.log(.info, "CoreBluetooth resetting...")
         case .unknown:
             ProtocolLogger.log(.info, "CoreBluetooth state: unknown (still initializing)")
@@ -162,11 +169,11 @@ final class BluetoothManager: NSObject, ObservableObject {
 
         for device in pairedDevices {
             guard let name = device.name, !name.isEmpty else { continue }
-            let address = device.addressString ?? "unknown"
+            guard let address = device.addressString else { continue }
             guard !seenAddresses.contains(address) else { continue }
             seenAddresses.insert(address)
 
-            let isBuds = DiscoveredDevice.isGalaxyBudsName(name)
+            let isBuds = DiscoveredDevice.isGalaxyBudsName(name) || address == DevicePersistence.lastDeviceAddress
             let connected = device.isConnected()
             let rssi = connected ? Int(device.rawRSSI()) : 0
 
@@ -205,6 +212,10 @@ final class BluetoothManager: NSObject, ObservableObject {
     // MARK: - Connection via RFCOMM (Non-blocking background queue)
 
     func connectToDevice(address: String) {
+        guard isBluetoothAvailable else {
+            updateState(.error(statusMessage.isEmpty ? "Bluetooth is unavailable. Turn it on and allow access in System Settings." : statusMessage))
+            return
+        }
         if isConnecting {
             ProtocolLogger.log(.info, "Connection attempt already in progress for \(address), skipping duplicate request")
             return
@@ -224,6 +235,8 @@ final class BluetoothManager: NSObject, ObservableObject {
             return
         }
 
+        closeCurrentChannel()
+        attemptGeneration += 1
         let deviceName = device.name ?? "Galaxy Buds"
         connectedDevice = device
 
@@ -244,33 +257,60 @@ final class BluetoothManager: NSObject, ObservableObject {
 
         targetDevice = device
 
-        // Gather candidate SDP channels from device services if available
-        var sdpChannels: [UInt8] = []
-        if let services = device.services as? [IOBluetoothSDPServiceRecord] {
-            for service in services {
-                var chID: BluetoothRFCOMMChannelID = 0
-                if service.getRFCOMMChannelID(&chID) == kIOReturnSuccess, chID > 0 {
-                    let sName = (service.getServiceName() ?? "").uppercased()
-                    let chUInt8 = UInt8(chID)
-                    if !sdpChannels.contains(chUInt8) {
-                        if sName.contains("GEAR") || sName.contains("SAMSUNG") || sName.contains("SPP") || sName.contains("BUDS") {
-                            sdpChannels.insert(chUInt8, at: 0)
-                        } else if chUInt8 >= 20 && chUInt8 <= 30 {
-                            sdpChannels.append(chUInt8)
-                        }
-                    }
-                }
+        // Resolve Samsung's configuration service, rather than probing audio channels.
+        if let channel = serviceChannel(device) {
+            candidateChannels = [channel]
+            currentChannelIndex = 0
+            tryNextChannel()
+        } else {
+            setStatus("Discovering the Buds2 Pro configuration service…")
+            let result = device.performSDPQuery(self)
+            guard result == kIOReturnSuccess else { failConnection("Bluetooth service discovery failed (\(result))."); return }
+            let generation = attemptGeneration
+            channelOpenTimeoutTask = Task { @MainActor in
+                do { try await Task.sleep(nanoseconds: 12_000_000_000) } catch { return }
+                guard generation == self.attemptGeneration, self.isConnecting else { return }
+                self.failConnection("Service discovery timed out. Open the case and connect the earbuds in Bluetooth Settings.")
             }
         }
-        // Samsung Galaxy Buds standard SPP channels: 27 is the primary across Buds2 Pro / Buds Pro / Buds2
-        let knownBudsSPPChannels: [UInt8] = [27, 28, 29, 26, 25, 24, 23, 22, 21, 20, 30]
-        for def in knownBudsSPPChannels {
-            if !sdpChannels.contains(def) { sdpChannels.append(def) }
-        }
+    }
 
-        candidateChannels = sdpChannels
+    private func serviceChannel(_ device: IOBluetoothDevice) -> UInt8? {
+        var uuid = UUID(uuidString: BudsConstants.sppNewUuid)!.uuid
+        let serviceUUID = withUnsafeBytes(of: &uuid) { IOBluetoothSDPUUID(bytes: $0.baseAddress, length: 16) }
+        guard let service = device.getServiceRecord(for: serviceUUID) else { return nil }
+        var channel: BluetoothRFCOMMChannelID = 0
+        guard service.getRFCOMMChannelID(&channel) == kIOReturnSuccess, channel > 0 else { return nil }
+        return channel
+    }
+
+    @objc func sdpQueryComplete(_ device: IOBluetoothDevice!, status: IOReturn) {
+        guard isConnecting, !cancelRequested, let device, device == targetDevice, rfcommChannel == nil else { return }
+        channelOpenTimeoutTask?.cancel()
+        guard status == kIOReturnSuccess, let channel = serviceChannel(device) else {
+            failConnection("The Buds2 Pro configuration service is unavailable. Connect the earbuds to this Mac and try again.")
+            return
+        }
+        candidateChannels = [channel]
         currentChannelIndex = 0
         tryNextChannel()
+    }
+
+    private func closeCurrentChannel() {
+        let channel = rfcommChannel
+        rfcommChannel = nil
+        channel?.setDelegate(nil)
+        channel?.close()
+    }
+
+    private func failConnection(_ message: String) {
+        channelOpenTimeoutTask?.cancel()
+        isConnecting = false
+        closeCurrentChannel()
+        targetDevice = nil
+        connectedDevice = nil
+        setStatus(message)
+        updateState(.error(message))
     }
 
     private var candidateChannels: [UInt8] = []
@@ -283,13 +323,12 @@ final class BluetoothManager: NSObject, ObservableObject {
         guard isConnecting, !cancelRequested, let device = targetDevice else { return }
 
         guard currentChannelIndex < candidateChannels.count else {
-            isConnecting = false
-            updateState(.disconnected)
-            setStatus("Connection failed")
+            failConnection("Could not open the configuration channel. Open the case and ensure the earbuds are connected to this Mac.")
             ProtocolLogger.log(.warning, "All candidate RFCOMM channels exhausted for \(device.name ?? "device")")
             return
         }
 
+        closeCurrentChannel()
         let cid = candidateChannels[currentChannelIndex]
         currentChannelIndex += 1
         ProtocolLogger.log(.info, "Opening RFCOMM channel \(cid) for \(device.name ?? "Galaxy Buds")...")
@@ -301,9 +340,10 @@ final class BluetoothManager: NSObject, ObservableObject {
             return
         }
 
+        let generation = attemptGeneration
         channelOpenTimeoutTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            if self.isConnecting && self.connectionState != .connected {
+            do { try await Task.sleep(nanoseconds: 10_000_000_000) } catch { return }
+            if generation == self.attemptGeneration && self.isConnecting && self.connectionState != .connected {
                 ProtocolLogger.log(.verbose, "Channel \(cid) attempt timed out, advancing...")
                 self.tryNextChannel()
             }
@@ -330,28 +370,25 @@ final class BluetoothManager: NSObject, ObservableObject {
         onDeviceConnected?(device)
     }
 
-    func sendData(_ data: [UInt8]) {
-        guard let channel = self.rfcommChannel, channel.isOpen() else {
-            ProtocolLogger.log(.error, "Cannot send: RFCOMM channel not open")
-            return
-        }
-
-        rfcommQueue.async {
-            var mutableData = data
-            let result = mutableData.withUnsafeMutableBufferPointer { buffer in
-                channel.writeSync(buffer.baseAddress!, length: UInt16(data.count))
-            }
-
-            if result != kIOReturnSuccess {
-                Task { @MainActor in
-                    ProtocolLogger.log(.error, "RFCOMM write failed: \(result)")
+    func sendData(_ data: [UInt8]) async -> Bool {
+        guard let channel = rfcommChannel, channel.isOpen(), !data.isEmpty,
+              data.count <= Int(UInt16.max) else { return false }
+        let generation = attemptGeneration
+        let result: IOReturn = await withCheckedContinuation { continuation in
+            rfcommQueue.async {
+                var bytes = data
+                let result = bytes.withUnsafeMutableBufferPointer {
+                    channel.writeSync($0.baseAddress!, length: UInt16($0.count))
                 }
-            } else {
-                Task { @MainActor in
-                    ProtocolLogger.log(.verbose, "Sent \(data.count) bytes over RFCOMM")
-                }
+                continuation.resume(returning: result)
             }
         }
+        guard generation == attemptGeneration else { return false }
+        if result != kIOReturnSuccess {
+            failConnection("Could not send the setting to your earbuds (Bluetooth error \(result)).")
+            return false
+        }
+        return true
     }
 
     // MARK: - Disconnection
@@ -364,21 +401,12 @@ final class BluetoothManager: NSObject, ObservableObject {
         updateState(.disconnecting)
         setStatus("Disconnecting...")
 
-        let channelToClose = rfcommChannel
-        rfcommChannel = nil
+        attemptGeneration += 1
+        closeCurrentChannel()
         connectedDevice = nil
         targetDevice = nil
-
-        rfcommQueue.async { [weak self] in
-            channelToClose?.setDelegate(nil)
-            channelToClose?.close()
-
-            Task { @MainActor in
-                self?.updateState(.disconnected)
-                self?.setStatus("Disconnected")
-                ProtocolLogger.log(.info, "Disconnected")
-            }
-        }
+        updateState(.disconnected)
+        setStatus("Disconnected")
     }
 
     // MARK: - Helpers
@@ -422,7 +450,9 @@ extension BluetoothManager: IOBluetoothRFCOMMChannelDelegate {
         status error: IOReturn
     ) {
         Task { @MainActor in
-            if error == kIOReturnSuccess, let ch = channel {
+            guard let channel, channel === self.rfcommChannel, self.isConnecting, !self.cancelRequested else { return }
+            if error == kIOReturnSuccess {
+                let ch = channel
                 guard let dev = ch.getDevice() ?? self.targetDevice ?? self.connectedDevice else { return }
                 self.setupChannel(ch, device: dev, deviceName: dev.name ?? "Galaxy Buds2 Pro")
             } else {
@@ -446,12 +476,19 @@ extension BluetoothManager: IOBluetoothRFCOMMChannelDelegate {
         ))
 
         Task { @MainActor in
+            guard let channel, channel === self.rfcommChannel, !self.cancelRequested else { return }
             onDataReceived?(bytes)
         }
     }
 
     nonisolated func rfcommChannelClosed(_ channel: IOBluetoothRFCOMMChannel!) {
         Task { @MainActor in
+            guard let channel, channel === self.rfcommChannel else { return }
+            self.channelOpenTimeoutTask?.cancel()
+            self.rfcommChannel = nil
+            self.connectedDevice = nil
+            self.targetDevice = nil
+            self.isConnecting = false
             ProtocolLogger.log(.warning, "RFCOMM channel closed unexpectedly")
             self.updateState(.disconnected)
             self.setStatus("Connection lost")

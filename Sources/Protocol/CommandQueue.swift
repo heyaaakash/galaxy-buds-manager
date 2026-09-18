@@ -29,19 +29,19 @@ struct PendingCommand: Identifiable {
 /// Manages outgoing commands with acknowledgement tracking, retries, and timeouts.
 actor CommandQueue {
     private var pendingCommands: [UInt8: PendingCommand] = [:]  // keyed by message ID
-    private var orderedQueue: [PendingCommand] = []
     private var timerTask: Task<Void, Never>?
     private var onSend: ((BudsMessage) async -> Void)?
 
     /// Number of currently pending commands.
     var pendingCount: Int {
-        orderedQueue.count
+        pendingCommands.count
     }
 
     // MARK: - Lifecycle
 
     /// Start the timeout monitor.
     func start(sendHandler: @escaping (BudsMessage) async -> Void) {
+        stop()
         self.onSend = sendHandler
         timerTask?.cancel()
         timerTask = Task { [weak self] in
@@ -57,7 +57,7 @@ actor CommandQueue {
             cmd.completion?(.failure(.disconnected))
         }
         pendingCommands.removeAll()
-        orderedQueue.removeAll()
+        onSend = nil
     }
 
     // MARK: - Sending
@@ -69,6 +69,7 @@ actor CommandQueue {
         maxRetries: Int = BudsConstants.maxRetries,
         completion: ((Result<BudsMessage, BudsError>) -> Void)? = nil
     ) async {
+        guard onSend != nil else { completion?(.failure(.disconnected)); return }
         let command = PendingCommand(
             message: message,
             sentAt: Date(),
@@ -84,7 +85,6 @@ actor CommandQueue {
         }
 
         pendingCommands[message.id.rawValue] = command
-        orderedQueue.append(command)
 
         ProtocolLogger.log(.outgoing, "\(message)")
 
@@ -101,19 +101,21 @@ actor CommandQueue {
             ProtocolLogger.log(.info, "Received response for unknown command: \(message.id)")
             return
         }
-
-        // Remove from ordered queue
-        orderedQueue.removeAll { $0.id == command.id }
-
         ProtocolLogger.log(.info, "Command \(message.id) acknowledged")
         command.completion?(.success(message))
+    }
+
+    func confirmNotification(_ message: BudsMessage) {
+        guard let pending = pendingCommands[message.rawID], pending.message.payload == message.payload else { return }
+        handleResponse(message)
     }
 
     // MARK: - Timeout Loop
 
     private func timeoutLoop() async {
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1 second
+            do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
+            guard !Task.isCancelled else { return }
 
             let now = Date()
             var expiredIds: [UInt8] = []
@@ -149,8 +151,9 @@ actor CommandQueue {
             }
 
             for id in expiredIds {
+                guard let current = pendingCommands[id], current.isExpired, !current.canRetry else { continue }
                 if let command = pendingCommands.removeValue(forKey: id) {
-                    orderedQueue.removeAll { $0.id == command.id }
+
                     ProtocolLogger.log(.error, "Command \(command.message.id) failed after \(command.maxRetries) retries")
                     command.completion?(.failure(.timeout))
                 }
@@ -161,7 +164,7 @@ actor CommandQueue {
     /// Cancel a specific command by message ID.
     func cancel(_ messageId: BudsMessageId) {
         if let command = pendingCommands.removeValue(forKey: messageId.rawValue) {
-            orderedQueue.removeAll { $0.id == command.id }
+
             command.completion?(.failure(.cancelled))
         }
     }

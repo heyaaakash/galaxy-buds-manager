@@ -5,16 +5,32 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
-    @State private var newName = ""
+    @State private var pendingAction: String?
+    @State private var confirmAction = false
+    @State private var launchAtLogin = DevicePersistence.launchAtLogin
 
     var body: some View {
         TabView {
             generalTab.tabItem { Label("General", systemImage: "gear") }
             bluetoothTab.tabItem { Label("Bluetooth", systemImage: "antenna.radiowaves.left.and.right") }
             deviceTab.tabItem { Label("Device", systemImage: "earbuds") }
-            advancedTab.tabItem { Label("Advanced", systemImage: "wrench.and.screwdriver") }
+            ScrollView { advancedTab }.tabItem { Label("Advanced", systemImage: "wrench.and.screwdriver") }
         }
         .frame(minWidth: 300, minHeight: 300)
+        .alert(pendingAction ?? "Device action", isPresented: $confirmAction) {
+            Button("Cancel", role: .cancel) {}
+            Button(pendingAction ?? "Continue", role: .destructive) {
+                Task {
+                    switch pendingAction {
+                    case "Factory Reset": await appState.resetDevice()
+                    case "Power Off": await appState.powerOffDevice()
+                    default: await appState.rebootDevice()
+                    }
+                }
+            }
+        } message: {
+            Text(pendingAction == "Factory Reset" ? "This erases earbud settings and pairing information. You will need to pair again." : "This disconnects the earbuds from all connected devices.")
+        }
     }
 
     // MARK: - General
@@ -22,10 +38,18 @@ struct SettingsView: View {
     private var generalTab: some View {
         Form {
             Toggle("Show battery in menu bar", isOn: $appState.showBatteryInMenuBar)
-            Toggle("Auto-reconnect on launch", isOn: $appState.autoReconnect)
+            Toggle("Connect automatically", isOn: $appState.autoReconnect)
             Toggle("Launch at login", isOn: Binding(
-                get: { DevicePersistence.launchAtLogin },
-                set: { DevicePersistence.launchAtLogin = $0 }
+                get: { launchAtLogin },
+                set: { value in
+                    do {
+                        try DevicePersistence.updateLaunchAtLogin(value)
+                        launchAtLogin = DevicePersistence.launchAtLogin
+                        if value && !launchAtLogin { appState.lastError = "Approve this app in System Settings → General → Login Items." }
+                    } catch {
+                        appState.lastError = "Could not change launch at login: \(error.localizedDescription)"
+                    }
+                }
             ))
         }
         .padding()
@@ -60,7 +84,7 @@ struct SettingsView: View {
             Section {
                 Button("Scan for Devices") { appState.scanForDevices() }
                 Button("Reconnect") { Task { await appState.reconnect() } }
-                Button("Forget Device") { DevicePersistence.clearLastDevice() }
+                Button("Forget Device") { appState.forgetDevice() }
                     .foregroundColor(.red)
             }
             Section {
@@ -75,27 +99,25 @@ struct SettingsView: View {
 
     private var deviceTab: some View {
         Form {
-            Section("Rename") {
-                HStack {
-                    TextField("New name", text: $newName)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Rename") {
-                        Task { await appState.renameDevice(name: newName) }
-                        newName = ""
-                    }
-                    .disabled(newName.isEmpty)
-                }
-                Text("Rename may not persist if the device reverts to its default name.")
+            Section("Device Name") {
+                Text("Use Galaxy Wearable on your phone to rename the earbuds. This app remembers their Bluetooth address after connecting.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Connections") {
+                Toggle("Seamless connection", isOn: Binding(
+                    get: { appState.deviceState.seamlessConnection },
+                    set: { value in Task { await appState.setSeamlessConnection(value) } }
+                ))
+            }
             Section("System") {
-                Button("Reboot Earbuds") { Task { await appState.rebootDevice() } }
-                Button("Power Off") { Task { await appState.powerOffDevice() } }
-                Button("Factory Reset") { Task { await appState.resetDevice() } }
+                Button("Reboot Earbuds") { pendingAction = "Reboot Earbuds"; confirmAction = true }
+                Button("Power Off") { pendingAction = "Power Off"; confirmAction = true }
+                Button("Factory Reset") { pendingAction = "Factory Reset"; confirmAction = true }
                     .foregroundColor(.red)
             }
         }
         .padding()
+        .disabled(!appState.canControl)
     }
 
     // MARK: - Advanced

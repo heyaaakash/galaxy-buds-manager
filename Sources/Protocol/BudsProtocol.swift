@@ -9,10 +9,13 @@ import Foundation
 final class BudsProtocol {
 
     let deviceState: DeviceState
-    private let commandQueue = CommandQueue()
+    private var commandQueue = CommandQueue()
+    var onError: ((String) -> Void)?
+    private var fitTimeout: Task<Void, Never>?
     let spec = BudsDeviceSpec()
-    private var sendHandler: (([UInt8]) async -> Void)?
+    private var sendHandler: (([UInt8]) async -> Bool)?
     private var handshakeComplete = false
+    private var sessionGeneration = 0
 
     init(deviceState: DeviceState) {
         self.deviceState = deviceState
@@ -22,7 +25,8 @@ final class BudsProtocol {
 
     // MARK: - Lifecycle
 
-    func start(sendHandler: @escaping ([UInt8]) async -> Void) async {
+    func start(sendHandler: @escaping ([UInt8]) async -> Bool) async {
+        sessionGeneration += 1
         self.sendHandler = sendHandler
         handshakeComplete = false
         incomingBuffer.removeAll()
@@ -30,13 +34,22 @@ final class BudsProtocol {
         await commandQueue.start { message in
             ProtocolLogger.logOutgoing(message)
             let raw = message.encode()
-            await sendHandler(raw)
+            _ = await sendHandler(raw)
         }
         ProtocolLogger.log(.info, "Protocol layer started for \(spec.deviceBaseName)")
     }
 
     func stop() {
-        Task { await commandQueue.stop() }
+        sessionGeneration += 1
+        deviceState.pendingCommands = []
+        let oldQueue = commandQueue
+        commandQueue = CommandQueue()
+        Task { await oldQueue.stop() }
+        sendHandler = nil
+        fitTimeout?.cancel()
+        deviceState.hasReceivedStatus = false
+        deviceState.findMyActive = false
+        deviceState.fitTestRunning = false
         handshakeComplete = false
         incomingBuffer.removeAll()
         ProtocolLogger.log(.info, "Protocol layer stopped")
@@ -54,12 +67,25 @@ final class BudsProtocol {
 
         let messages = BudsMessage.decodeChunk(&incomingBuffer)
         for message in messages {
+            guard !message.isFragment else {
+                ProtocolLogger.log(.warning, "Ignoring unsupported fragmented message")
+                continue
+            }
             ProtocolLogger.logIncoming(message, rawBytes: message.encode())
             processMessage(message)
         }
     }
 
     private func processMessage(_ message: BudsMessage) {
+        if message.id == .universalAcknowledgement, let raw = message.payload.first {
+            let response = BudsMessage(id: .from(raw), type: .response, payload: Array(message.payload.dropFirst()), rawID: raw)
+            applyAcknowledgedSetting(response)
+            Task { await commandQueue.handleResponse(response) }
+            return
+        }
+        if message.type == .response {
+            Task { await commandQueue.handleResponse(message) }
+        }
         switch message.id {
         // Status
         case .extendedStatusUpdated: handleExtendedStatusUpdated(message)
@@ -69,7 +95,12 @@ final class BudsProtocol {
         case .versionInfoLong:       handleVersionInfoLong(message)
 
         // Noise control
-        case .noiseControlsUpdate:   handleNoiseControlsUpdate(message)
+        case .noiseControlsUpdate:
+            handleNoiseControlsUpdate(message)
+            // This notification is also used to confirm a mode change on some firmware.
+            if let mode = message.payload.first {
+                Task { await commandQueue.confirmNotification(.response(.noiseControls, payload: [mode])) }
+            }
         case .ambientModeUpdated:    handleAmbientModeUpdated(message)
 
         // Touch
@@ -80,6 +111,11 @@ final class BudsProtocol {
 
         // Fit test
         case .checkFitResult:        handleFitTestResult(message)
+        case .findMyEarbudsStart: deviceState.findMyActive = true
+        case .findMyEarbudsStop:
+            deviceState.findMyActive = false
+            deviceState.findMyLeftMuted = false
+            deviceState.findMyRightMuted = false
 
         // Debug responses
         case .debugSerialNumber, .debugBuildInfo, .debugGetVersion, .debugSku,
@@ -89,11 +125,10 @@ final class BudsProtocol {
         // Default
         default:
             if message.type == .response {
-                Task { await commandQueue.handleResponse(message) }
                 ProtocolLogger.log(.info, "Command response: \(message.id)")
             } else {
                 ProtocolLogger.log(.info, "Unhandled message: \(message.id) (\(message.payload.count) bytes)")
-                sendAcknowledgement(for: message.id)
+                if message.id != .unknown { sendAcknowledgement(for: message.id) }
             }
         }
     }
@@ -111,24 +146,12 @@ final class BudsProtocol {
             ProtocolLogger.log(.error, "Failed to decode extended status: \(error)")
         }
 
-        if !handshakeComplete {
-            Task {
-                await sendFireAndForget(ManagerInfoEncoder.encode())
-                await sendFireAndForget(UpdateTimeEncoder.encode())
-                handshakeComplete = true
-                ProtocolLogger.log(.info, "Manager handshake sent")
-            }
-        }
-
-        Task { await requestInitialData() }
+        Task { await requestInitialState() }
     }
 
     private func handleStatusUpdated(_ message: BudsMessage) {
-        sendAcknowledgement(for: message.id)
-        if let payload = message.payload as [UInt8]?,
-           payload.count >= 3 {
-            deviceState.batteryLeft = BatteryState(level: Int(payload[0]), isCharging: false, batteryType: nil)
-            deviceState.batteryRight = BatteryState(level: Int(payload[1]), isCharging: false, batteryType: nil)
+        if let decoder = try? StatusUpdateDecoder(payload: message.payload) {
+            decoder.apply(to: deviceState)
         }
     }
 
@@ -201,6 +224,8 @@ final class BudsProtocol {
     }
 
     private func handleFitTestResult(_ message: BudsMessage) {
+        fitTimeout?.cancel()
+        Task { await sendFireAndForget(.request(.checkFitOfEarbuds, payload: [0])) }
         do {
             let decoder = try FitTestResultDecoder(payload: message.payload)
             decoder.apply(to: deviceState)
@@ -242,17 +267,18 @@ final class BudsProtocol {
 
     /// Public entry point called by AppState after connection.
     func requestInitialState() async {
-        handshakeComplete = false
+        guard !handshakeComplete, sendHandler != nil, deviceState.connectionState.isConnected else { return }
+        handshakeComplete = true
         ProtocolLogger.log(.info, "Sending Galaxy Buds2 Pro handshake & initial queries...")
         await sendFireAndForget(ManagerInfoEncoder.encode())
         await sendFireAndForget(UpdateTimeEncoder.encode())
-        await sendFireAndForget(DebugEncoder.debugGetVersion())
+        await sendFireAndForget(.request(.versionInfo))
         await sendFireAndForget(DebugEncoder.debugSerialNumber())
         handshakeComplete = true
     }
 
     private func requestInitialData() async {
-        await sendFireAndForget(DebugEncoder.debugGetVersion())
+        await sendFireAndForget(.request(.versionInfo))
         await sendFireAndForget(DebugEncoder.debugSerialNumber())
         await sendFireAndForget(UpdateTimeEncoder.encode())
     }
@@ -263,156 +289,264 @@ final class BudsProtocol {
         _ message: BudsMessage,
         completion: ((Result<BudsMessage, BudsError>) -> Void)? = nil
     ) async {
-        await commandQueue.enqueue(message, completion: completion)
+        guard deviceState.connectionState.isConnected, deviceState.hasReceivedStatus else {
+            onError?("Wait for the earbuds to connect and finish syncing.")
+            completion?(.failure(.notConnected))
+            return
+        }
+        guard !deviceState.pendingCommands.contains(message.rawID) else { return }
+        deviceState.pendingCommands.insert(message.rawID)
+        let generation = sessionGeneration
+        await commandQueue.enqueue(message, maxRetries: 0) { [weak self] result in
+            Task { @MainActor in
+                guard let self, generation == self.sessionGeneration else { return }
+                self.deviceState.pendingCommands.remove(message.rawID)
+                completion?(result)
+                if case .failure(let error) = result, error != .commandReplaced && error != .disconnected && error != .cancelled {
+                    self.onError?("Setting was not confirmed: \(error.description). Reconnect and try again.")
+                }
+            }
+        }
     }
 
     func sendFireAndForget(_ message: BudsMessage) async {
         ProtocolLogger.logOutgoing(message)
         let raw = message.encode()
-        await sendHandler?(raw)
+        if let handler = sendHandler, !(await handler(raw)) {
+            onError?("Could not send to the earbuds. Check the Bluetooth connection.")
+        }
     }
 
     private func sendAcknowledgement(for messageId: BudsMessageId) {
         Task {
             let ack = BudsMessage.ack(for: messageId)
-            let raw = ack.encode()
-            await sendHandler?(raw)
+            await sendFireAndForget(ack)
         }
+    }
+
+    func stopFitTest() async {
+        fitTimeout?.cancel()
+        deviceState.fitTestRunning = false
+        await sendFireAndForget(.request(.checkFitOfEarbuds, payload: [0]))
+    }
+
+    private func applyAcknowledgedSetting(_ message: BudsMessage) {
+        guard let value = message.payload.first else { return }
+        let enabled = value == 1
+        switch message.id {
+        case .noiseControls:
+            if let mode = NoiseControlMode(rawValue: Int(value)) {
+                deviceState.noiseControlMode = mode
+                deviceState.ancEnabled = mode == .anc
+                deviceState.ambientEnabled = mode == .ambient
+            }
+        case .equalizer: deviceState.equalizerPreset = EqualizerPreset(rawValue: Int(value)) ?? .disabled
+        case .ambientVolume: deviceState.ambientVolume = Int(value)
+        case .extraHighAmbient: deviceState.extraHighAmbient = enabled
+        case .setAncWithOneEarbud: deviceState.ancWithOneEarbud = enabled
+        case .adjustSoundSync: deviceState.adjustSoundSync = enabled; deviceState.gameModeEnabled = enabled
+        case .setSidetone: deviceState.sidetoneEnabled = enabled
+        case .setDetectConversations: deviceState.detectConversations = enabled
+        case .setDetectConversationsDuration: deviceState.detectConversationsDuration = Int(value)
+        case .lockTouchpad:
+            deviceState.touchpadLocked = enabled
+            if message.payload.count >= 5 {
+                let bits: [UInt8] = [3, 2, 1, 0, 4, 5]
+                var flags: UInt8 = 0
+                for index in 1..<min(message.payload.count, 7) where message.payload[index] == 1 {
+                    flags |= 1 << bits[index - 1]
+                }
+                deviceState.touchEnabledFlags = flags
+            }
+        case .setHearingEnhancements: deviceState.stereoBalance = min(Int(value), 32)
+        case .outsideDoubleTap: deviceState.doubleTapVolume = enabled
+        case .setSeamlessConnection: deviceState.seamlessConnection = !enabled
+        case .extraClearSoundCall: deviceState.extraClearCallSound = enabled
+        case .customizeAmbientSound:
+            guard message.payload.count >= 4 else { return }
+            deviceState.customAmbientEnabled = enabled
+            deviceState.customAmbientLeft = Int(message.payload[1])
+            deviceState.customAmbientRight = Int(message.payload[2])
+            deviceState.customAmbientTone = Int(message.payload[3])
+        case .setTouchpadOption:
+            guard message.payload.count >= 2 else { return }
+            deviceState.touchLeftAction = TouchAction(rawValue: value) ?? .none
+            deviceState.touchRightAction = TouchAction(rawValue: message.payload[1]) ?? .none
+        case .muteEarbud:
+            guard message.payload.count >= 2 else { return }
+            deviceState.findMyLeftMuted = enabled
+            deviceState.findMyRightMuted = message.payload[1] == 1
+        default: break
+        }
+    }
+
+    func setTapEnabled(bit: UInt8, enabled: Bool) async {
+        guard bit < 6 else { return }
+        let flags = enabled ? deviceState.touchEnabledFlags | (1 << bit) : deviceState.touchEnabledFlags & ~(1 << bit)
+        await sendCommand(TouchpadEncoder.lock(deviceState.touchpadLocked, flags: flags, revision: deviceState.interfaceRevision))
+    }
+
+    func setStereoBalance(_ value: Int) async {
+        await sendCommand(.request(.setHearingEnhancements, payload: [UInt8(max(0, min(value, 32)))]))
+    }
+
+    func setDoubleTapVolume(_ enabled: Bool) async {
+        await sendCommand(.request(.outsideDoubleTap, payload: [enabled ? 1 : 0]))
+    }
+
+    func setCustomAmbient(enabled: Bool, left: Int, right: Int, tone: Int) async {
+        await sendCommand(AmbientEncoder.customize(enabled: enabled, left: left, right: right, tone: tone,
+                                                  maximum: deviceState.extraHighAmbient ? 4 : 2))
     }
 
     // MARK: - Public API
 
     // Noise Control
     func setNoiseControl(mode: NoiseControlMode) async {
-        await sendFireAndForget(NoiseControlEncoder.encode(mode: mode))
+        await sendCommand(NoiseControlEncoder.encode(mode: mode))
     }
 
     func setAncWithOneEarbud(_ enabled: Bool) async {
-        await sendFireAndForget(AncEncoder.setAncWithOneEarbud(enabled))
+        await sendCommand(AncEncoder.setAncWithOneEarbud(enabled))
     }
 
     func setAdjustSoundSync(_ enabled: Bool) async {
-        await sendFireAndForget(AncEncoder.setAdjustSoundSync(enabled))
+        await sendCommand(AncEncoder.setAdjustSoundSync(enabled))
     }
 
     // Equalizer
     func setEqualizer(preset: EqualizerPreset) async {
-        await sendFireAndForget(EqualizerEncoder.encode(preset: preset))
+        await sendCommand(EqualizerEncoder.encode(preset: preset))
     }
 
     // Ambient
     func setAmbientVolume(_ volume: Int) async {
-        await sendFireAndForget(AmbientEncoder.setVolume(volume))
+        await sendCommand(AmbientEncoder.setVolume(volume, maximum: deviceState.extraHighAmbient ? 3 : 2))
     }
 
     func setExtraHighAmbient(_ enabled: Bool) async {
-        await sendFireAndForget(AmbientEncoder.setExtraHigh(enabled))
+        await sendCommand(AmbientEncoder.setExtraHigh(enabled))
     }
 
     func customizeAmbient(left: UInt8, center: UInt8, right: UInt8) async {
-        await sendFireAndForget(AmbientEncoder.customizeAmbient(left: left, center: center, right: right))
+        await sendCommand(AmbientEncoder.customizeAmbient(left: left, center: center, right: right))
     }
 
     func setNoiseReductionLevel(_ level: UInt8) async {
-        await sendFireAndForget(AmbientEncoder.setNoiseReductionLevel(level))
+        await sendCommand(AmbientEncoder.setNoiseReductionLevel(level))
     }
 
     func setAmplifyAmbient(_ enabled: Bool) async {
-        await sendFireAndForget(AmbientEncoder.setAmplifyAmbient(enabled))
+        await sendCommand(AmbientEncoder.setAmplifyAmbient(enabled))
     }
 
     // Touch
     func setTouchpadLocked(_ locked: Bool) async {
-        await sendFireAndForget(TouchpadEncoder.lock(locked))
+        await sendCommand(TouchpadEncoder.lock(locked, flags: deviceState.touchEnabledFlags, revision: deviceState.interfaceRevision))
     }
 
     func setTouchActions(left: TouchAction, right: TouchAction) async {
-        await sendFireAndForget(TouchpadEncoder.setActions(left: left, right: right))
+        await sendCommand(TouchpadEncoder.setActions(left: left, right: right))
     }
 
     // Find My Earbuds
     func startFindMyEarbuds() async {
-        await sendFireAndForget(FindMyEarbudsEncoder.start())
+        guard !deviceState.isAnyBudWorn else { onError?("Remove your earbuds before ringing them."); return }
+        await sendCommand(FindMyEarbudsEncoder.start()) { [weak self] result in
+            if case .success = result { Task { @MainActor in self?.deviceState.findMyActive = true } }
+        }
     }
 
     func stopFindMyEarbuds() async {
-        await sendFireAndForget(FindMyEarbudsEncoder.stop())
+        await sendCommand(FindMyEarbudsEncoder.stop()) { [weak self] result in
+            if case .success = result { Task { @MainActor in self?.deviceState.findMyActive = false } }
+        }
     }
 
     func muteFindMyEarbud(left: Bool, right: Bool) async {
-        await sendFireAndForget(FindMyEarbudsEncoder.mute(left: left, right: right))
+        await sendCommand(FindMyEarbudsEncoder.mute(left: left, right: right))
     }
 
     // Audio Features
     func setSpatialAudio(_ enabled: Bool) async {
-        await sendFireAndForget(SpatialAudioEncoder.setEnabled(enabled))
+        await sendCommand(SpatialAudioEncoder.setEnabled(enabled))
     }
 
     func setGameMode(_ enabled: Bool) async {
-        await sendFireAndForget(GameModeEncoder.setEnabled(enabled))
+        await sendCommand(GameModeEncoder.setEnabled(enabled))
     }
 
     func setAdaptiveVolume(_ enabled: Bool) async {
-        await sendFireAndForget(VoiceCallEncoder.setAdaptiveVolume(enabled))
+        await sendCommand(VoiceCallEncoder.setAdaptiveVolume(enabled))
     }
 
     func setAdaptiveEq(_ enabled: Bool) async {
-        await sendFireAndForget(AdaptiveEqEncoder.setEnabled(enabled))
+        await sendCommand(AdaptiveEqEncoder.setEnabled(enabled))
     }
 
     // Voice & Call
     func setDetectConversations(_ enabled: Bool) async {
-        await sendFireAndForget(VoiceCallEncoder.setDetectConversations(enabled))
+        await sendCommand(VoiceCallEncoder.setDetectConversations(enabled))
     }
 
     func setDetectConversationsDuration(_ duration: UInt8) async {
-        await sendFireAndForget(VoiceCallEncoder.setDetectConversationsDuration(duration))
+        await sendCommand(VoiceCallEncoder.setDetectConversationsDuration(duration))
     }
 
     func setSidetone(_ enabled: Bool) async {
-        await sendFireAndForget(VoiceCallEncoder.setSidetone(enabled))
+        await sendCommand(VoiceCallEncoder.setSidetone(enabled))
     }
 
     func setInBandRingtone(_ enabled: Bool) async {
-        await sendFireAndForget(VoiceCallEncoder.setInBandRingtone(enabled))
+        await sendCommand(VoiceCallEncoder.setInBandRingtone(enabled))
     }
 
     func setVoiceNotification(_ enabled: Bool) async {
-        await sendFireAndForget(VoiceCallEncoder.setVoiceNotification(enabled))
+        await sendCommand(VoiceCallEncoder.setVoiceNotification(enabled))
     }
 
     func setPauseMediaOnRemoval(_ enabled: Bool) async {
-        await sendFireAndForget(VoiceCallEncoder.setPauseMediaOnRemoval(enabled))
+        await sendCommand(VoiceCallEncoder.setPauseMediaOnRemoval(enabled))
     }
 
     func setExtraClearCallSound(_ enabled: Bool) async {
-        await sendFireAndForget(VoiceCallEncoder.setExtraClearCallSound(enabled))
+        await sendCommand(VoiceCallEncoder.setExtraClearCallSound(enabled))
     }
 
     // Device Management
     func resetDevice() async {
-        await sendFireAndForget(DeviceManagementEncoder.reset())
+        await sendCommand(DeviceManagementEncoder.reset())
     }
 
     func rebootDevice() async {
-        await sendFireAndForget(DeviceManagementEncoder.reboot())
+        await sendCommand(DeviceManagementEncoder.reboot())
     }
 
     func powerOffDevice() async {
-        await sendFireAndForget(DeviceManagementEncoder.poweroff())
+        await sendCommand(DeviceManagementEncoder.poweroff())
     }
 
     func renameDevice(name: String) async {
-        await sendFireAndForget(DeviceManagementEncoder.rename(name: name))
+        onError?("Rename requires Galaxy Wearable on your phone; the alternate naming protocol is not implemented here.")
     }
 
     func setSeamlessConnection(_ enabled: Bool) async {
-        await sendFireAndForget(DeviceManagementEncoder.setSeamlessConnection(enabled))
+        await sendCommand(DeviceManagementEncoder.setSeamlessConnection(enabled))
     }
 
     // Fit Test
     func startFitTest() async {
+        guard deviceState.connectionState.isConnected, deviceState.hasReceivedStatus else { return }
+        deviceState.fitTestResult = nil
+        deviceState.fitTestRunning = true
         await sendFireAndForget(FitTestEncoder.startCheck())
+        fitTimeout?.cancel()
+        fitTimeout = Task { @MainActor in
+            do { try await Task.sleep(nanoseconds: 20_000_000_000) } catch { return }
+            guard self.deviceState.fitTestRunning else { return }
+            await self.stopFitTest()
+            self.onError?("Fit test timed out. Wear both earbuds and try again.")
+        }
     }
 
     // Debug / Diagnostics

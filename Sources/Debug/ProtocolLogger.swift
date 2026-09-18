@@ -69,7 +69,8 @@ struct ProtocolLogEntry: Identifiable, Sendable {
 
 /// Global protocol logger. Stores all entries in memory for the session
 /// and supports export for debugging and replay.
-actor ProtocolLogger {
+enum ProtocolLogger {
+    private static let lock = NSRecursiveLock()
     /// Maximum entries to keep in memory.
     static let maxEntries = 5000
 
@@ -77,10 +78,18 @@ actor ProtocolLogger {
     private static var entries: [ProtocolLogEntry] = []
 
     /// Whether logging is enabled.
-    static var isEnabled: Bool = true
+    private static var enabled = DevicePersistence.debugLogging || ProcessInfo.processInfo.arguments.contains("--protocol-log")
+    static var isEnabled: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return enabled }
+        set { lock.lock(); defer { lock.unlock() }; enabled = newValue; DevicePersistence.debugLogging = newValue }
+    }
 
     /// Callback for real-time log streaming (used by debug UI).
-    static var onEntry: ((ProtocolLogEntry) -> Void)?
+    private static var entryHandler: ((ProtocolLogEntry) -> Void)?
+    static var onEntry: ((ProtocolLogEntry) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return entryHandler }
+        set { lock.lock(); defer { lock.unlock() }; entryHandler = newValue }
+    }
 
     // MARK: - Logging
 
@@ -92,7 +101,8 @@ actor ProtocolLogger {
         messageId: BudsMessageId? = nil,
         rawBytes: [UInt8]? = nil
     ) {
-        guard isEnabled else { return }
+        lock.lock()
+        guard enabled else { lock.unlock(); return }
 
         let entry = ProtocolLogEntry(
             timestamp: Date(),
@@ -110,13 +120,17 @@ actor ProtocolLogger {
             entries.removeFirst(entries.count - maxEntries)
         }
 
+        let callback = entryHandler
+        lock.unlock()
+
         // Console output
         let dir = direction.rawValue
         let hexInfo = entry.hexDump.map { " \($0)" } ?? ""
         print("[\(entry.timestampString)] \(dir) [\(level.rawValue)] \(message)\(hexInfo)")
 
+        fflush(stdout)
         // Notify observers
-        onEntry?(entry)
+        callback?(entry)
     }
 
     /// Log an outgoing message.
@@ -136,28 +150,30 @@ actor ProtocolLogger {
 
     /// Get all logged entries.
     static func getAllEntries() -> [ProtocolLogEntry] {
+        lock.lock(); defer { lock.unlock() }
         return entries
     }
 
     /// Get entries for a specific message ID.
     static func getEntries(for messageId: BudsMessageId) -> [ProtocolLogEntry] {
-        return entries.filter { $0.messageId == messageId }
+        return getAllEntries().filter { $0.messageId == messageId }
     }
 
     /// Get entries in a time range.
     static func getEntries(from start: Date, to end: Date) -> [ProtocolLogEntry] {
-        return entries.filter { $0.timestamp >= start && $0.timestamp <= end }
+        return getAllEntries().filter { $0.timestamp >= start && $0.timestamp <= end }
     }
 
     /// Get recent entries (last N).
     static func getRecentEntries(count: Int = 100) -> [ProtocolLogEntry] {
-        return Array(entries.suffix(count))
+        return Array(getAllEntries().suffix(max(0, count)))
     }
 
     // MARK: - Export
 
     /// Export log as human-readable text.
     static func exportText() -> String {
+        let entries = getAllEntries()
         var output: [String] = []
         output.append("=== Galaxy Buds Protocol Log ===")
         output.append("Session: \(ISO8601DateFormatter().string(from: Date()))")
@@ -178,11 +194,10 @@ actor ProtocolLogger {
 
     /// Export log as JSON array for programmatic replay.
     static func exportJSON() -> Data? {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        let entries = getAllEntries()
         let jsonEntries: [[String: Any]] = entries.map { entry in
             var dict: [String: Any] = [
-                "timestamp": entry.timestamp,
+                "timestamp": ISO8601DateFormatter().string(from: entry.timestamp),
                 "level": entry.level.rawValue,
                 "direction": entry.direction.rawValue,
                 "message": entry.message
@@ -207,11 +222,13 @@ actor ProtocolLogger {
             return nil
         }
 
-        return array.compactMap { $0["rawBytes"] as? [UInt8] }
+        return array.filter { ($0["direction"] as? String) == ProtocolLogEntry.LogDirection.recv.rawValue }
+            .compactMap { $0["rawBytes"] as? [UInt8] }
     }
 
     /// Clear all log entries.
     static func clear() {
+        lock.lock(); defer { lock.unlock() }
         entries.removeAll()
     }
 

@@ -69,6 +69,18 @@ struct MenuBarPopover: View {
             }
         }
         .frame(width: 320)
+        .onChange(of: appState.deviceState.connectionState) { _, state in
+            if !state.isConnected, currentView != .settings, currentView != .debugLog { currentView = .main }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if let error = appState.lastError {
+                HStack(alignment: .top) {
+                    Text(error).font(.caption).textSelection(.enabled)
+                    Button { appState.lastError = nil } label: { Image(systemName: "xmark.circle") }
+                        .buttonStyle(.plain).accessibilityLabel("Dismiss message")
+                }.padding(10).frame(maxWidth: .infinity).background(Color.orange.opacity(0.12))
+            }
+        }
     }
 
     @ViewBuilder
@@ -116,7 +128,9 @@ struct MenuBarPopover: View {
 
             Divider()
 
-            content()
+            ScrollView { content() }
+                .frame(maxHeight: 440)
+                .disabled(currentView != .settings && currentView != .debugLog && !appState.canControl)
         }
     }
 
@@ -128,9 +142,15 @@ struct MenuBarPopover: View {
             Divider().padding(.horizontal, 12)
             batterySection
             Divider().padding(.horizontal, 12)
-            noiseControlQuickSwitch
+            if !appState.deviceState.hasReceivedStatus {
+                HStack { ProgressView().controlSize(.small); Text("Syncing settings…").font(.caption) }.padding(8)
+            }
+            if !appState.deviceState.pendingCommands.isEmpty {
+                Text("Applying setting…").font(.caption).foregroundStyle(.secondary).padding(4)
+            }
+            noiseControlQuickSwitch.disabled(!appState.canControl)
             Divider().padding(.horizontal, 12)
-            quickInfoSection
+            quickInfoSection.disabled(!appState.canControl)
             Divider().padding(.horizontal, 12)
             footerSection
         }
@@ -257,6 +277,8 @@ struct MenuBarPopover: View {
             .padding(.horizontal, 12)
 
             HStack {
+                Button("Settings") { currentView = .settings }
+                    .buttonStyle(.plain).font(.system(size: 11))
                 Button("Refresh") { appState.scanForDevices() }
                     .buttonStyle(.plain)
                     .font(.system(size: 11))
@@ -312,6 +334,8 @@ struct MenuBarPopover: View {
             .controlSize(.small)
 
             HStack {
+                Button("Settings") { currentView = .settings }
+                    .buttonStyle(.plain).font(.system(size: 11))
                 Button("Debug Log") { currentView = .debugLog }
                     .buttonStyle(.plain)
                     .font(.system(size: 11))
@@ -332,9 +356,9 @@ struct MenuBarPopover: View {
 
     private var batterySection: some View {
         VStack(spacing: 6) {
-            batteryRow(label: "Left", level: appState.deviceState.batteryLeft.level, icon: "earbuds.left")
-            batteryRow(label: "Right", level: appState.deviceState.batteryRight.level, icon: "earbuds.right")
-            batteryRow(label: "Case", level: appState.deviceState.batteryCase.level, icon: "batterycaseportrait")
+            batteryRow(label: "Left", level: appState.deviceState.batteryLeft.level, icon: "earbuds")
+            batteryRow(label: "Right", level: appState.deviceState.batteryRight.level, icon: "earbuds")
+            batteryRow(label: "Case", level: appState.deviceState.batteryCase.level, icon: "battery.100percent")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -411,6 +435,9 @@ struct MenuBarPopover: View {
 
     private var quickInfoSection: some View {
         VStack(spacing: 0) {
+            infoRow(icon: "waveform.path", label: "Noise Control Settings", value: nil) { currentView = .noiseControl }
+            infoRow(icon: "ear.badge.checkmark", label: "Earbud Fit Test", value: nil) { currentView = .fitTest }
+            infoRow(icon: "wrench.and.screwdriver", label: "Diagnostics", value: nil) { currentView = .advanced }
             infoRow(icon: "speaker.wave.2", label: "Equalizer", value: appState.deviceState.equalizerPreset.description) {
                 currentView = .equalizer
             }
@@ -453,6 +480,9 @@ struct MenuBarPopover: View {
 
     private var footerSection: some View {
         HStack {
+            Button("Disconnect") { appState.disconnect() }
+                .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
+            Spacer()
             Button("Settings") { currentView = .settings }
                 .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer()

@@ -16,6 +16,10 @@ import Foundation
 /// the rest retain their numeric identifiers for future reference.
 enum BudsMessageId: UInt8, CustomStringConvertible, CaseIterable, Sendable {
 
+    case setHearingEnhancements = 0x8F
+    case outsideDoubleTap = 0x95
+    case universalAcknowledgement = 0x42
+
     // MARK: - Status & Connection
 
     /// Basic status update: battery L/R, placement, connection.

@@ -21,10 +21,9 @@ struct VoiceDetectSheet: View {
                             get: { appState.deviceState.detectConversationsDuration },
                             set: { val in Task { await appState.setDetectConversationsDuration(UInt8(val)) } }
                         )) {
-                            Text("1s").tag(0)
-                            Text("2s").tag(1)
-                            Text("3s").tag(2)
-                            Text("5s").tag(3)
+                            Text("5s").tag(0)
+                            Text("10s").tag(1)
+                            Text("15s").tag(2)
                         }
                         .pickerStyle(.segmented)
                     }
@@ -38,25 +37,15 @@ struct VoiceDetectSheet: View {
                 set: { val in Task { await appState.setSidetone(val) } }
             ))
 
-            Toggle("In-Band Ringtone", isOn: Binding(
-                get: { appState.deviceState.inBandRingtone },
-                set: { val in Task { await appState.setInBandRingtone(val) } }
-            ))
+            if appState.deviceState.interfaceRevision >= 13 {
+                Toggle("Extra clear call sound", isOn: Binding(
+                    get: { appState.deviceState.extraClearCallSound },
+                    set: { value in Task { await appState.setExtraClearCallSound(value) } }
+                ))
+            }
+            Text("Phone notification reading and Samsung adaptive audio features require the Galaxy Wearable app on a supported phone.")
+                .font(.caption).foregroundStyle(.secondary)
 
-            Toggle("Voice Notifications", isOn: Binding(
-                get: { appState.deviceState.voiceNotificationEnabled },
-                set: { val in Task { await appState.setVoiceNotification(val) } }
-            ))
-
-            Toggle("Pause Media on Removal", isOn: Binding(
-                get: { appState.deviceState.pauseMediaOnRemoval },
-                set: { val in Task { await appState.setPauseMediaOnRemoval(val) } }
-            ))
-
-            Toggle("Adaptive Volume", isOn: Binding(
-                get: { appState.deviceState.adaptiveVolumeEnabled },
-                set: { val in Task { await appState.setAdaptiveVolume(val) } }
-            ))
         }
         .padding(16)
         .frame(width: 320)

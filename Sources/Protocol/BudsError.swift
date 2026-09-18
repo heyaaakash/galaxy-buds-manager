@@ -4,7 +4,7 @@
 import Foundation
 
 /// Errors that can occur during protocol operations and Bluetooth connection.
-enum BudsError: Error, CustomStringConvertible, Sendable {
+enum BudsError: Error, CustomStringConvertible, Sendable, Equatable {
     // MARK: - Protocol Errors
     case invalidPacket(String)
     case crcMismatch

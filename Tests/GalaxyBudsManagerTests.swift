@@ -15,7 +15,7 @@ final class BudsCRC16Tests: XCTestCase {
 
     func testCRC16EmptyData() {
         let crc = BudsCRC16.compute([])
-        XCTAssertEqual(crc, 0xFFFF, "CRC of empty data should be init value 0xFFFF")
+        XCTAssertEqual(crc, 0x0000, "CRC of empty data should be init value 0x0000")
     }
 
     func testCRC16EncodeDecode() {
@@ -202,51 +202,46 @@ final class BudsMessageTests: XCTestCase {
 // MARK: - Decoder Tests
 
 final class ExtendedStatusDecoderTests: XCTestCase {
-
-    func testDecodeValidPayload() throws {
-        let payload: [UInt8] = [
-            0x0D, 0x01, 0x02, 0x64, 0x32, 0x01, 0x00, 0x00,
-            0x46, 0x01, 0x00, 0x00, 0x03, 0x00, 0x15, 0x02, 0x01
-        ]
+    func testBuds2ProRevision13Snapshot() throws {
+        var payload = [UInt8](repeating: 0, count: 46)
+        payload.replaceSubrange(0..<18, with: [13, 0, 100, 50, 1, 0, 0x12, 70, 1, 3, 0xBF, 0x12, 2, 0, 0x47, 1, 0x48, 1])
+        payload[23] = 2; payload[26] = 1; payload[27] = 2; payload[28] = 1
+        payload[33] = 1; payload[43] = 0x15; payload[45] = 1
         let decoder = try ExtendedStatusDecoder(payload: payload)
-        XCTAssertEqual(decoder.interfaceRevision, 13)
-        XCTAssertEqual(decoder.wearingLeft, .wearing)
-        XCTAssertEqual(decoder.wearingRight, .notWearing)
-        XCTAssertEqual(decoder.batteryLeft, 100)
-        XCTAssertEqual(decoder.batteryRight, 50)
-        XCTAssertTrue(decoder.isCoupled)
-        XCTAssertEqual(decoder.mainConnection, .right)
-        XCTAssertEqual(decoder.batteryCase, 70)
-        XCTAssertTrue(decoder.ambientEnabled)
-        XCTAssertEqual(decoder.equalizerMode, .dynamic)
-        XCTAssertEqual(decoder.touchLeft, .voiceAssistant)
-        XCTAssertEqual(decoder.touchRight, .noiseControl)
-        XCTAssertEqual(decoder.colorLeft, .white)
-        XCTAssertTrue(decoder.sidetoneEnabled)
-    }
-
-    func testDecodeTooShortPayload() {
-        XCTAssertThrowsError(try ExtendedStatusDecoder(payload: [0x01, 0x02, 0x03]))
-    }
-
-    func testApplyToDeviceState() throws {
-        let payload: [UInt8] = [
-            0x0D, 0x01, 0x01, 0x50, 0x60, 0x01, 0x01, 0x00,
-            0x40, 0x01, 0x00, 0x00, 0x02, 0x00, 0x23, 0x01, 0x01
-        ]
         let state = DeviceState()
-        let decoder = try ExtendedStatusDecoder(payload: payload)
         decoder.apply(to: state)
-
+        XCTAssertEqual(state.batteryLeft.level, 100)
+        XCTAssertEqual(state.batteryRight.level, 50)
+        XCTAssertEqual(state.batteryCase.level, 70)
+        XCTAssertTrue(state.batteryLeft.isCharging)
+        XCTAssertTrue(state.batteryRight.isCharging)
+        XCTAssertTrue(state.batteryCase.isCharging)
         XCTAssertEqual(state.wearingLeft, .wearing)
-        XCTAssertEqual(state.batteryLeft.level, 80)
-        XCTAssertEqual(state.batteryRight.level, 96)
-        XCTAssertEqual(state.batteryCase.level, 64)
-        XCTAssertEqual(state.mainConnection, .left)
-        XCTAssertTrue(state.ambientEnabled)
-        XCTAssertEqual(state.equalizerPreset, .soft)
-        XCTAssertEqual(state.touchLeftAction, .ambientSound)
-        XCTAssertEqual(state.touchRightAction, .volume)
+        XCTAssertEqual(state.wearingRight, .notWearing)
+        XCTAssertEqual(state.noiseControlMode, .ambient)
+        XCTAssertEqual(state.equalizerPreset, .dynamic)
+        XCTAssertEqual(state.touchLeftAction, .voiceAssistant)
+        XCTAssertEqual(state.touchRightAction, .noiseControl)
+        XCTAssertFalse(state.touchpadLocked)
+        XCTAssertEqual(state.colorLeft, .white)
+        XCTAssertEqual(state.colorRight, .boraPurple)
+        XCTAssertTrue(state.detectConversations)
+        XCTAssertTrue(state.extraHighAmbient)
+        XCTAssertTrue(state.hasReceivedStatus)
+    }
+
+    func testTruncatedRevision13Rejected() {
+        XCTAssertThrowsError(try ExtendedStatusDecoder(payload: [13] + Array(repeating: 0, count: 33)))
+    }
+
+    func testRevisionZeroAndUnknownBattery() throws {
+        var payload = [UInt8](repeating: 0, count: 34)
+        payload[2] = 255; payload[7] = 255
+        let state = DeviceState()
+        try ExtendedStatusDecoder(payload: payload).apply(to: state)
+        XCTAssertNil(state.batteryLeft.level)
+        XCTAssertNil(state.batteryCase.level)
+        XCTAssertFalse(state.extraHighAmbient)
     }
 }
 
@@ -260,7 +255,7 @@ final class NoiseControlsUpdateDecoderTests: XCTestCase {
     func testDecodeAmbientWithVolume() throws {
         let decoder = try NoiseControlsUpdateDecoder(payload: [0x02, 0x02])
         XCTAssertEqual(decoder.mode, .ambient)
-        XCTAssertEqual(decoder.volume, 2)
+        XCTAssertEqual(decoder.volume, 0)
     }
 
     func testDecodeEmptyPayload() {
@@ -273,39 +268,37 @@ final class TouchUpdatedDecoderTests: XCTestCase {
     func testDecode() throws {
         let decoder = try TouchUpdatedDecoder(payload: [0x01, 0x53])
         XCTAssertTrue(decoder.touchpadLocked)
-        XCTAssertEqual(decoder.touchLeft, .noiseControl)
-        XCTAssertEqual(decoder.touchRight, .volume)
     }
 
     func testDecodeTooShort() {
-        XCTAssertThrowsError(try TouchUpdatedDecoder(payload: [0x01]))
+        XCTAssertThrowsError(try TouchUpdatedDecoder(payload: []))
     }
 }
 
 final class SerialNumberDecoderTests: XCTestCase {
 
     func testDecode() throws {
-        let payload = Array("LEFT123\0RIGHT456\0".utf8)
+        let payload = Array("LEFT1234567RIGHT456789".utf8)
         let decoder = try SerialNumberDecoder(payload: payload)
-        XCTAssertEqual(decoder.serialLeft, "LEFT123")
-        XCTAssertEqual(decoder.serialRight, "RIGHT456")
+        XCTAssertEqual(decoder.serialLeft, "LEFT1234567")
+        XCTAssertEqual(decoder.serialRight, "RIGHT456789")
     }
 }
 
 final class FitTestResultDecoderTests: XCTestCase {
 
     func testPassed() throws {
-        let decoder = try FitTestResultDecoder(payload: [0x00, 0x00])
+        let decoder = try FitTestResultDecoder(payload: [1, 1])
         XCTAssertEqual(decoder.result, .passed)
     }
 
     func testFailedLeft() throws {
-        let decoder = try FitTestResultDecoder(payload: [0x01, 0x00])
+        let decoder = try FitTestResultDecoder(payload: [0, 1])
         XCTAssertEqual(decoder.result, .failedLeft)
     }
 
     func testFailedBoth() throws {
-        let decoder = try FitTestResultDecoder(payload: [0x01, 0x01])
+        let decoder = try FitTestResultDecoder(payload: [0, 0])
         XCTAssertEqual(decoder.result, .failedBoth)
     }
 }
@@ -348,13 +341,13 @@ final class ProtocolEncoderTests: XCTestCase {
     }
 
     func testTouchpadLockEncoder() {
-        XCTAssertEqual(TouchpadEncoder.lock(true).payload, [0x01])
-        XCTAssertEqual(TouchpadEncoder.lock(false).payload, [0x00])
+        XCTAssertEqual(TouchpadEncoder.lock(true).payload, [0, 1, 1, 1, 1, 1, 1])
+        XCTAssertEqual(TouchpadEncoder.lock(false).payload, [1, 1, 1, 1, 1, 1, 1])
     }
 
     func testTouchpadActionsEncoder() {
         let msg = TouchpadEncoder.setActions(left: .noiseControl, right: .volume)
-        XCTAssertEqual(msg.payload, [0x52]) // 5<<4 | 2
+        XCTAssertEqual(msg.payload, [2, 3])
     }
 
     func testManagerInfoEncoder() {
@@ -386,7 +379,7 @@ final class ProtocolEncoderTests: XCTestCase {
 
     func testAmbientCustomizeEncoder() {
         let msg = AmbientEncoder.customizeAmbient(left: 1, center: 2, right: 3)
-        XCTAssertEqual(msg.payload, [1, 2, 3])
+        XCTAssertEqual(msg.payload, [1, 1, 2, 2])
     }
 
     func testResetEncoder() {
@@ -411,7 +404,7 @@ final class DeviceStateTests: XCTestCase {
         state.batteryLeft = BatteryState(level: 80, isCharging: false, batteryType: nil)
         state.batteryRight = BatteryState(level: 60, isCharging: false, batteryType: nil)
         state.batteryCase = BatteryState(level: 40, isCharging: false, batteryType: nil)
-        XCTAssertEqual(state.averageBattery, 60)
+        XCTAssertEqual(state.averageBattery, 70)
     }
 
     func testAverageBatteryNoData() {

@@ -10,13 +10,14 @@ struct FindMyEarbudsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
 
-            Text("Plays a sound to help locate your earbuds.")
+            Text("Remove the earbuds from your ears before starting. Plays a sound to help locate nearby earbuds.")
                 .font(.caption).foregroundStyle(.secondary)
 
             HStack {
                 Button("Start") {
                     Task { await appState.startFindMyEarbuds() }
                 }
+                .disabled(appState.deviceState.findMyActive || appState.deviceState.isAnyBudWorn)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
 
@@ -42,5 +43,8 @@ struct FindMyEarbudsSheet: View {
         }
         .padding(16)
         .frame(width: 320)
+        .onDisappear {
+            if appState.deviceState.findMyActive { Task { await appState.stopFindMyEarbuds() } }
+        }
     }
 }

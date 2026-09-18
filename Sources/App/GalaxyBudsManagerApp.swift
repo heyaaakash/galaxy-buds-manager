@@ -31,7 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon — this is a menu-bar-only app
         NSApp.setActivationPolicy(.accessory)
-        ProtocolLogger.setupCache()
+        ProtocolLogger.setupLogDirectory()
         ProtocolLogger.log(.info, "Galaxy Buds2 Pro Manager started")
     }
 

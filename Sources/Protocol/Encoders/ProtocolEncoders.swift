@@ -16,7 +16,7 @@ enum ManagerInfoEncoder {
         sdkVersion: UInt8 = 0
     ) -> BudsMessage {
         let payload: [UInt8] = [
-            ClientType.other.rawValue,
+            1,
             isSamsungDevice ? 0x01 : 0x02,
             sdkVersion
         ]
@@ -33,12 +33,12 @@ enum UpdateTimeEncoder {
         var payload = [UInt8](repeating: 0, count: 12)
 
         for i in 0..<8 {
-            payload[i] = UInt8((epoch >> (56 - i * 8)) & 0xFF)
+            payload[i] = UInt8((epoch >> (i * 8)) & 0xFF)
         }
 
         let tzMs = Int32(timezoneOffset)
         for i in 0..<4 {
-            payload[8 + i] = UInt8((tzMs >> (24 - i * 8)) & 0xFF)
+            payload[8 + i] = UInt8((tzMs >> (i * 8)) & 0xFF)
         }
 
         return BudsMessage.request(.updateTime, payload: payload)
@@ -68,8 +68,8 @@ enum AmbientEncoder {
         return BudsMessage.request(.setAmbientMode, payload: [enabled ? 0x01 : 0x00])
     }
 
-    static func setVolume(_ volume: Int) -> BudsMessage {
-        let clamped = max(0, min(volume, 2))
+    static func setVolume(_ volume: Int, maximum: Int = 2) -> BudsMessage {
+        let clamped = max(0, min(volume, maximum))
         return BudsMessage.request(.ambientVolume, payload: [UInt8(clamped)])
     }
 
@@ -78,7 +78,12 @@ enum AmbientEncoder {
     }
 
     static func customizeAmbient(left: UInt8, center: UInt8, right: UInt8) -> BudsMessage {
-        return BudsMessage.request(.customizeAmbientSound, payload: [left, center, right])
+        customize(enabled: true, left: Int(left), right: Int(right), tone: Int(center))
+    }
+
+    static func customize(enabled: Bool, left: Int, right: Int, tone: Int, maximum: Int = 2) -> BudsMessage {
+        .request(.customizeAmbientSound, payload: [enabled ? 1 : 0,
+            UInt8(max(0, min(left, maximum))), UInt8(max(0, min(right, maximum))), UInt8(max(0, min(tone, 4)))])
     }
 
     static func setNoiseReductionLevel(_ level: UInt8) -> BudsMessage {
@@ -93,13 +98,13 @@ enum AmbientEncoder {
 // MARK: - Touchpad Encoder
 
 enum TouchpadEncoder {
-    static func lock(_ locked: Bool) -> BudsMessage {
-        return BudsMessage.request(.lockTouchpad, payload: [locked ? 0x01 : 0x00])
+    static func lock(_ locked: Bool, flags: UInt8 = 0x3F, revision: Int = 1) -> BudsMessage {
+        let bits: [UInt8] = revision >= 1 ? [3, 2, 1, 0, 4, 5] : [3, 2, 1, 0]
+        return BudsMessage.request(.lockTouchpad, payload: [locked ? 0 : 1] + bits.map { (flags >> $0) & 1 })
     }
 
     static func setActions(left: TouchAction, right: TouchAction) -> BudsMessage {
-        let byte = (left.rawValue << 4) | right.rawValue
-        return BudsMessage.request(.setTouchpadOption, payload: [byte])
+        return BudsMessage.request(.setTouchpadOption, payload: [left.rawValue, right.rawValue])
     }
 
     static func setTouchAndHoldNoiseControls(left: UInt8, right: UInt8) -> BudsMessage {
@@ -229,7 +234,7 @@ enum DeviceManagementEncoder {
     }
 
     static func setSeamlessConnection(_ enabled: Bool) -> BudsMessage {
-        return BudsMessage.request(.setSeamlessConnection, payload: [enabled ? 0x01 : 0x00])
+        return BudsMessage.request(.setSeamlessConnection, payload: [enabled ? 0x00 : 0x01])
     }
 }
 
@@ -237,7 +242,7 @@ enum DeviceManagementEncoder {
 
 enum FitTestEncoder {
     static func startCheck() -> BudsMessage {
-        return BudsMessage.request(.checkFitOfEarbuds)
+        return BudsMessage.request(.checkFitOfEarbuds, payload: [1])
     }
 }
 

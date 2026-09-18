@@ -8,7 +8,10 @@ EXEC_NAME="GalaxyBudsManager"
 BUNDLE_ID="com.galaxybudsmanager.app"
 VERSION="1.0.0"
 BUILD_DIR=".build"
-RELEASE_DIR="$BUILD_DIR/release"
+CONFIGURATION="${CONFIGURATION:-release}"
+SWIFT_ARGS=(--disable-sandbox --configuration "$CONFIGURATION")
+if [ -n "${SWIFT_BUILD_PATH:-}" ]; then SWIFT_ARGS+=(--scratch-path "$SWIFT_BUILD_PATH"); fi
+if [ -n "${SDKROOT:-}" ]; then SWIFT_ARGS+=(--sdk "$SDKROOT"); fi
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 DMG_NAME="$BUILD_DIR/GalaxyBuds2-Pro-Manager"
 
@@ -21,28 +24,11 @@ echo "════════════════════════�
 
 # ── Step 1: Build release binary ────────────────────────────────
 echo ""
-echo "▶ Step 1: Building release binary..."
-swift build -c release 2>&1 | tail -5
-
-# Find the release binary (exclude .dSYM directories)
-BINARY_PATH=""
-for candidate in \
-    "$BUILD_DIR/release/$EXEC_NAME" \
-    "$BUILD_DIR/$EXEC_NAME" \
-    "$(swift build -c release --show-bin-path 2>/dev/null)/$EXEC_NAME"; do
-    if [ -f "$candidate" ] && [[ ! "$candidate" == *".dSYM"* ]]; then
-        BINARY_PATH="$candidate"
-        break
-    fi
-done
-
-if [ -z "$BINARY_PATH" ]; then
-    # Fallback: find excluding .dSYM
-    BINARY_PATH=$(find "$BUILD_DIR" -name "$EXEC_NAME" -type f ! -path "*.dSYM*" -perm +111 2>/dev/null | head -1)
-fi
-
-if [ -z "$BINARY_PATH" ] || [ ! -f "$BINARY_PATH" ]; then
-    echo "ERROR: Binary not found. Build may have failed."
+echo "▶ Step 1: Building $CONFIGURATION binary..."
+swift build "${SWIFT_ARGS[@]}"
+BINARY_PATH="$(swift build "${SWIFT_ARGS[@]}" --show-bin-path)/$EXEC_NAME"
+if [ ! -x "$BINARY_PATH" ]; then
+    echo "ERROR: The current build did not produce $BINARY_PATH"
     exit 1
 fi
 echo "   ✓ Binary: $BINARY_PATH ($(du -h "$BINARY_PATH" | cut -f1))"
@@ -68,7 +54,7 @@ mkdir -p "$ICONSET_DIR"
 
 # macOS icon sizes needed for .iconset
 # https://developer.apple.com/design/human-interface-guidelines/app-icons
-ICON_SIZES=(16 32 64 128 256 512 1024)
+ICON_SIZES=(16 32 128 256 512)
 for SIZE in "${ICON_SIZES[@]}"; do
     # Standard resolution
     sips -z "$SIZE" "$SIZE" --out "$ICONSET_DIR/icon_${SIZE}x${SIZE}.png" "app-icon.png" >/dev/null 2>&1
@@ -99,6 +85,13 @@ echo "   ✓ Info.plist written"
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 echo "   ✓ PkgInfo written"
 
+codesign --force --deep --sign - "$APP_BUNDLE"
+if [ "${SKIP_DMG:-0}" = 1 ]; then
+    rm -rf "$ICONSET_DIR"
+    echo "Built: $APP_BUNDLE"
+    exit 0
+fi
+
 # ── Step 7: Create DMG ────────────────────────────────────────
 echo ""
 echo "▶ Step 6: Creating DMG..."
@@ -124,9 +117,17 @@ hdiutil create \
 rm -rf "$DMG_TEMP"
 echo "   ✓ DMG created: $DMG_FINAL ($(du -h "$DMG_FINAL" | cut -f1))"
 
-# ── Step 8: Cleanup ───────────────────────────────────────────
+# ── Step 8: Copy DMG to dist/ for easy access ────────────────
 echo ""
-echo "▶ Step 7: Cleaning up temp iconset..."
+echo "▶ Step 7: Copying DMG to dist/..."
+DIST_DIR="$SCRIPT_DIR/dist"
+mkdir -p "$DIST_DIR"
+cp "$DMG_FINAL" "$DIST_DIR/$(basename "$DMG_FINAL")"
+echo "   ✓ DMG copied to: $DIST_DIR/$(basename "$DMG_FINAL")"
+
+# ── Step 9: Cleanup ───────────────────────────────────────────
+echo ""
+echo "▶ Step 8: Cleaning up temp iconset..."
 rm -rf "$ICONSET_DIR"
 
 # ── Done ──────────────────────────────────────────────────────
@@ -136,7 +137,7 @@ echo "  BUILD COMPLETE"
 echo "═══════════════════════════════════════════════════════"
 echo ""
 echo "  App Bundle: $APP_BUNDLE"
-echo "  DMG:        $DMG_FINAL"
+echo "  DMG:        $DIST_DIR/$(basename "$DMG_FINAL")"
 echo ""
 echo "  To install:"
 echo "    1. Open the DMG"

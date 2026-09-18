@@ -13,6 +13,12 @@ struct BatteryState: Equatable, Sendable {
     let isCharging: Bool
     let batteryType: String?
 
+    init(level: Int?, isCharging: Bool, batteryType: String?) {
+        self.level = level.flatMap { (0...100).contains($0) ? $0 : nil }
+        self.isCharging = isCharging
+        self.batteryType = batteryType
+    }
+
     static let unknown = BatteryState(level: nil, isCharging: false, batteryType: nil)
 
     var levelString: String {
@@ -108,10 +114,10 @@ enum EqualizerPreset: Int, CustomStringConvertible, Sendable, CaseIterable {
 enum TouchAction: UInt8, CustomStringConvertible, Sendable, CaseIterable {
     case none            = 0
     case voiceAssistant  = 1
-    case volume          = 2
-    case ambientSound    = 3
+    case volume          = 3
+    case ambientSound    = 6
     case spotifySpotOn   = 4
-    case noiseControl    = 5
+    case noiseControl    = 2
 
     var description: String {
         switch self {
@@ -223,6 +229,7 @@ final class DeviceState: ObservableObject, @unchecked Sendable {
 
     // MARK: - Connection
     @Published var connectionState: ConnectionState = .disconnected
+    @Published var deviceAddress = ""
     @Published var deviceName: String = "Galaxy Buds2 Pro"
 
     // MARK: - Battery
@@ -252,6 +259,19 @@ final class DeviceState: ObservableObject, @unchecked Sendable {
     // MARK: - Equalizer
     @Published var equalizerPreset: EqualizerPreset = .disabled
     @Published var customEqualizerBands: [Int] = []
+
+    @Published var stereoBalance = 16
+    @Published var doubleTapVolume = false
+    @Published var seamlessConnection = false
+    @Published var extraClearCallSound = false
+    @Published var customAmbientEnabled = false
+    @Published var customAmbientLeft = 1
+    @Published var customAmbientRight = 1
+    @Published var customAmbientTone = 2
+    @Published var pendingCommands: Set<UInt8> = []
+    @Published var hasReceivedStatus = false
+    @Published var touchEnabledFlags: UInt8 = 0x3F
+    @Published var fitTestRunning = false
 
     // MARK: - Touch
     @Published var touchpadLocked: Bool = false
@@ -307,7 +327,7 @@ final class DeviceState: ObservableObject, @unchecked Sendable {
     var isNoiseControlActive: Bool { noiseControlMode != .off }
 
     var averageBattery: Int? {
-        let levels = [batteryLeft.level, batteryRight.level, batteryCase.level].compactMap { $0 }
+        let levels = [batteryLeft.level, batteryRight.level].compactMap { $0 }
         guard !levels.isEmpty else { return nil }
         return levels.reduce(0, +) / levels.count
     }
@@ -333,16 +353,66 @@ final class DeviceState: ObservableObject, @unchecked Sendable {
         batteryCase = .unknown
         wearingLeft = .unknown
         wearingRight = .unknown
+        mainConnection = .right
+        isCoupled = false
+        placementByte = 0
         noiseControlMode = .off
         ancEnabled = false
         ambientEnabled = false
+        ambientVolume = 0
+        extraHighAmbient = false
+        ambientVoiceFocus = false
+        adjustSoundSync = false
+        ancWithOneEarbud = false
         equalizerPreset = .disabled
+        customEqualizerBands = []
+        stereoBalance = 16
+        doubleTapVolume = false
+        seamlessConnection = false
+        extraClearCallSound = false
+        customAmbientEnabled = false
+        customAmbientLeft = 1
+        customAmbientRight = 1
+        customAmbientTone = 2
+        pendingCommands = []
+        hasReceivedStatus = false
+        touchEnabledFlags = 0x3F
+        fitTestRunning = false
+        touchpadLocked = false
+        touchLeftAction = .none
+        touchRightAction = .none
+        bixbyWakeupEnabled = false
+        detectConversations = false
+        detectConversationsDuration = 0
+        sidetoneEnabled = false
+        inBandRingtone = false
+        voiceNotificationEnabled = false
+        pauseMediaOnRemoval = false
+        spatialAudioEnabled = false
+        gameModeEnabled = false
+        adaptiveVolumeEnabled = false
         firmwareVersion = ""
+        firmwareVersionLong = ""
         serialNumber = ""
+        cradleSerialNumber = ""
+        colorLeft = .unknown
+        colorRight = .unknown
+        interfaceRevision = 0
+        buildInfo = ""
+        sku = ""
+        debugDataRaw = []
         leftTemperature = nil
         rightTemperature = nil
         leftVoltage = nil
         rightVoltage = nil
+        caseVoltage = nil
+        leftCurrent = nil
+        rightCurrent = nil
+        batteryCycles = nil
+        findMyActive = false
+        findMyLeftMuted = false
+        findMyRightMuted = false
+        fitTestResult = nil
     }
 }
 
