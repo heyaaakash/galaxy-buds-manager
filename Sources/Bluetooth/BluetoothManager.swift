@@ -94,9 +94,9 @@ final class BluetoothManager: NSObject, ObservableObject {
         let address = device.addressString ?? ""
         Task { @MainActor in
             ProtocolLogger.log(.info, "System Bluetooth device connected: \"\(name)\" [\(address)]")
-            if DiscoveredDevice.isGalaxyBudsName(name) || address == DevicePersistence.lastDeviceAddress {
-                self.onSystemDeviceConnected?(device)
-            }
+            // Forward every system connection; AppState scans and only attaches
+            // to recognized Galaxy Buds.
+            self.onSystemDeviceConnected?(device)
         }
     }
 
@@ -211,7 +211,7 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     // MARK: - Connection via RFCOMM (Non-blocking background queue)
 
-    func connectToDevice(address: String) {
+    func connectToDevice(address: String, requireSystemConnected: Bool = false) {
         guard isBluetoothAvailable else {
             updateState(.error(statusMessage.isEmpty ? "Bluetooth is unavailable. Turn it on and allow access in System Settings." : statusMessage))
             return
@@ -246,6 +246,15 @@ final class BluetoothManager: NSObject, ObservableObject {
             updateState(.disconnected)
             setStatus(msg)
             ProtocolLogger.log(.warning, "Device not paired: \(address)")
+            return
+        }
+
+        // Passive attaches must never pull the earbuds to this Mac. If the
+        // system-level link dropped (or never existed), stay disconnected.
+        if requireSystemConnected && !device.isConnected() {
+            ProtocolLogger.log(.info, "Passive attach skipped for \(address): no system-level connection")
+            isConnecting = false
+            updateState(.disconnected)
             return
         }
 

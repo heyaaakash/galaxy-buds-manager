@@ -1,22 +1,30 @@
-// SettingsView.swift
-// Application settings with native macOS tab layout.
-
 import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
+    @State private var selectedSection: Section = .general
     @State private var pendingAction: String?
     @State private var confirmAction = false
     @State private var launchAtLogin = DevicePersistence.launchAtLogin
 
+    private enum Section: String, CaseIterable {
+        case general = "General"
+        case bluetooth = "Bluetooth"
+        case device = "Device"
+        case advanced = "Advanced"
+    }
+
     var body: some View {
-        TabView {
-            generalTab.tabItem { Label("General", systemImage: "gear") }
-            bluetoothTab.tabItem { Label("Bluetooth", systemImage: "antenna.radiowaves.left.and.right") }
-            deviceTab.tabItem { Label("Device", systemImage: "earbuds") }
-            ScrollView { advancedTab }.tabItem { Label("Advanced", systemImage: "wrench.and.screwdriver") }
+        BudsPage {
+            Picker("Settings section", selection: $selectedSection) {
+                ForEach(Section.allCases, id: \.self) { section in
+                    Text(section.rawValue).tag(section)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            sectionContent
         }
-        .frame(minWidth: 300, minHeight: 300)
         .alert(pendingAction ?? "Device action", isPresented: $confirmAction) {
             Button("Cancel", role: .cancel) {}
             Button(pendingAction ?? "Continue", role: .destructive) {
@@ -33,12 +41,19 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - General
+    @ViewBuilder
+    private var sectionContent: some View {
+        switch selectedSection {
+        case .general: generalSettings
+        case .bluetooth: bluetoothSettings
+        case .device: deviceSettings
+        case .advanced: advancedSettings
+        }
+    }
 
-    private var generalTab: some View {
-        Form {
+    private var generalSettings: some View {
+        BudsCard(title: "General", symbol: "gearshape") {
             Toggle("Show battery in menu bar", isOn: $appState.showBatteryInMenuBar)
-            Toggle("Connect automatically", isOn: $appState.autoReconnect)
             Toggle("Launch at login", isOn: Binding(
                 get: { launchAtLogin },
                 set: { value in
@@ -51,109 +66,95 @@ struct SettingsView: View {
                     }
                 }
             ))
+            Text("The app attaches automatically when the earbuds connect to this Mac. It never connects them by itself.")
+                .font(.caption).foregroundStyle(.secondary)
         }
-        .padding()
     }
 
-    // MARK: - Bluetooth
-
-    private var bluetoothTab: some View {
-        Form {
-            Section("Connection") {
-                HStack {
-                    Text("Status")
-                    Spacer()
-                    Text(appState.deviceState.connectionState.description)
-                        .foregroundColor(appState.deviceState.connectionState.isConnected ? .green : .secondary)
-                }
-                if let addr = DevicePersistence.lastDeviceAddress {
-                    HStack {
-                        Text("Address")
-                        Spacer()
-                        Text(addr).monospaced().font(.caption)
-                    }
+    private var bluetoothSettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            BudsCard(title: "Connection", symbol: "antenna.radiowaves.left.and.right") {
+                BudsInfoRow(title: "Status", value: appState.deviceState.connectionState.description)
+                if let address = DevicePersistence.lastDeviceAddress {
+                    BudsInfoRow(title: "Address", value: address)
                 }
                 if let name = DevicePersistence.lastDeviceName {
-                    HStack {
-                        Text("Name")
-                        Spacer()
-                        Text(name)
-                    }
+                    BudsInfoRow(title: "Name", value: name)
                 }
             }
-            Section {
-                Button("Scan for Devices") { appState.scanForDevices() }
-                Button("Reconnect") { Task { await appState.reconnect() } }
-                Button("Forget Device") { appState.forgetDevice() }
-                    .foregroundColor(.red)
-            }
-            Section {
-                Text("Galaxy Buds2 Pro use Bluetooth SPP (RFCOMM) for configuration.")
+            BudsCard(title: "Actions", symbol: "arrow.triangle.2.circlepath") {
+                HStack(spacing: 6) {
+                    Button("Scan") { appState.scanForDevices() }
+                    Button("Reconnect") { Task { await appState.reconnect() } }
+                    Button("Forget") { appState.forgetDevice() }
+                        .foregroundStyle(.red)
+                }
+                .controlSize(.small)
+                Text("Configuration uses Bluetooth SPP (RFCOMM).")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .padding()
     }
 
-    // MARK: - Device
-
-    private var deviceTab: some View {
-        Form {
-            Section("Device Name") {
-                Text("Use Galaxy Wearable on your phone to rename the earbuds. This app remembers their Bluetooth address after connecting.")
+    private var deviceSettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            BudsCard(title: "Device name", symbol: "pencil") {
+                Text("Rename the earbuds in Galaxy Wearable on your phone. This app remembers their Bluetooth address.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Connections") {
+            BudsCard(title: "Connections", symbol: "link") {
                 Toggle("Seamless connection", isOn: Binding(
                     get: { appState.deviceState.seamlessConnection },
                     set: { value in Task { await appState.setSeamlessConnection(value) } }
                 ))
+                .disabled(!appState.canControl)
             }
-            Section("System") {
-                Button("Reboot Earbuds") { pendingAction = "Reboot Earbuds"; confirmAction = true }
-                Button("Power Off") { pendingAction = "Power Off"; confirmAction = true }
-                Button("Factory Reset") { pendingAction = "Factory Reset"; confirmAction = true }
-                    .foregroundColor(.red)
+            BudsCard(title: "System", symbol: "power") {
+                HStack(spacing: 6) {
+                    Button("Reboot") { pendingAction = "Reboot Earbuds"; confirmAction = true }
+                    Button("Power Off") { pendingAction = "Power Off"; confirmAction = true }
+                    Button("Factory Reset") { pendingAction = "Factory Reset"; confirmAction = true }
+                        .foregroundStyle(.red)
+                }
+                .controlSize(.small)
+                .disabled(!appState.canControl)
             }
         }
-        .padding()
-        .disabled(!appState.canControl)
     }
 
-    // MARK: - Advanced
-
-    private var advancedTab: some View {
-        Form {
-            Section("Protocol") {
+    private var advancedSettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            BudsCard(title: "Protocol log", symbol: "doc.text") {
                 Toggle("Enable protocol logging", isOn: Binding(
                     get: { ProtocolLogger.isEnabled },
                     set: { ProtocolLogger.isEnabled = $0 }
                 ))
-            }
-            Section("Export") {
-                Button("Export Protocol Log") {
-                    let log = ProtocolLogger.exportText()
-                    let panel = NSSavePanel()
-                    panel.allowedContentTypes = [.plainText]
-                    panel.nameFieldStringValue = "galaxy_buds_protocol_log.txt"
-                    panel.begin { result in
-                        if result == .OK, let url = panel.url {
-                            try? log.write(to: url, atomically: true, encoding: .utf8)
+                HStack(spacing: 6) {
+                    Button("Export Log") {
+                        let log = ProtocolLogger.exportText()
+                        let panel = NSSavePanel()
+                        panel.allowedContentTypes = [.plainText]
+                        panel.nameFieldStringValue = "galaxy_buds_protocol_log.txt"
+                        panel.begin { result in
+                            if result == .OK, let url = panel.url {
+                                try? log.write(to: url, atomically: true, encoding: .utf8)
+                            }
                         }
                     }
+                    Button("Clear Log") { ProtocolLogger.clear() }
+                        .foregroundStyle(.red)
                 }
-                Button("Clear Protocol Log") { ProtocolLogger.clear() }
-                    .foregroundColor(.red)
+                .controlSize(.small)
             }
-            Section("Capability Matrix") {
+            BudsCard(title: "Capability matrix", symbol: "list.bullet.rectangle") {
                 Text(CapabilityMatrix.summary())
-                    .font(.caption).monospaced()
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
             }
-            Section("macOS Compatibility & Limitations") {
-                Text("• 360 Audio / Spatial Head Tracking: Requires Samsung OneUI spatial rendering framework (Android only).\n• Samsung Seamless Codec (SSC 24-bit): Requires Samsung kernel audio driver. macOS uses high-bitrate AAC.\n• Firmware Updates (FOTA): Gated on macOS for hardware safety.")
+            BudsCard(title: "macOS compatibility", symbol: "info.circle") {
+                Text("360 Audio and spatial head tracking require Samsung OneUI. Samsung Seamless Codec requires a Samsung audio driver. Firmware updates are unavailable in this app; use Galaxy Wearable.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .padding()
     }
 }

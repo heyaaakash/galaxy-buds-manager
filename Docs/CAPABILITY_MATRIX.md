@@ -8,7 +8,7 @@ Target: Samsung SM-R510, macOS 14+. The device's extended-status revision determ
 |---|---|
 | Detection | Paired Buds2 Pro names, saved address, macOS connect notification; no pairing bypass |
 | Connection | Samsung configuration-service UUID via SDP; asynchronous channel opening with timeout and stale-callback rejection |
-| Automatic reconnect | Startup, unexpected disconnect, Bluetooth power-on, wake; bounded exponential delay; respects saved setting and manual disconnect |
+| Attachment model | Passive: attaches only when macOS natively connects the earbuds (startup, wake, Bluetooth power-on, system connect notification); never initiates or retries connections itself; manual Connect remains available |
 | Battery | L/R/case, unavailable levels shown as unknown; charging from extended revision 11+ or basic status revision 1+ |
 | Noise control | Off / ANC / ambient; universal ACK or matching noise notification confirms a change |
 | Ambient | Base volume 0–2; extra-high option revision 13+, extra step 3; customization per side and tone |

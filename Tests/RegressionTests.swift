@@ -45,6 +45,66 @@ struct RegressionTests {
         #expect(UpdateTimeEncoder.encode(date: Date(timeIntervalSince1970: 1)).payload.prefix(8) == [0xE8, 3, 0, 0, 0, 0, 0, 0])
     }
 
+    @MainActor @Test func findMyEarbudsStartsFireAndForget() async {
+        let state = DeviceState()
+        state.connectionState = .connected
+        state.hasReceivedStatus = true
+        let proto = BudsProtocol(deviceState: state)
+        var sent = [[UInt8]]()
+        await proto.start { sent.append($0); return true }
+
+        await proto.startFindMyEarbuds()
+        #expect(sent.count == 1)
+        #expect(BudsMessage.decode(sent[0])?.id == .findMyEarbudsStart)
+        #expect(state.findMyActive)
+        #expect(state.pendingCommands.isEmpty)
+
+        await proto.stopFindMyEarbuds()
+        #expect(sent.count == 2)
+        #expect(BudsMessage.decode(sent[1])?.id == .findMyEarbudsStop)
+        #expect(!state.findMyActive)
+
+        proto.stop()
+    }
+
+    @MainActor @Test func findMyEarbudsRingsWhileWearingWhenSupported() async {
+        let state = DeviceState()
+        state.connectionState = .connected
+        state.hasReceivedStatus = true
+        state.interfaceRevision = 4
+        state.wearingLeft = .wearing
+        let proto = BudsProtocol(deviceState: state)
+        var sent = [[UInt8]]()
+        await proto.start { sent.append($0); return true }
+
+        await proto.startFindMyEarbuds()
+        #expect(sent.count == 1)
+        #expect(BudsMessage.decode(sent[0])?.id == .findMyEarbudsOnWearingStart)
+        #expect(state.findMyActive)
+
+        proto.stop()
+    }
+
+    @MainActor @Test func findMyEarbudsRefusesLoudRingWhileWornOnOldFirmware() async {
+        let state = DeviceState()
+        state.connectionState = .connected
+        state.hasReceivedStatus = true
+        state.interfaceRevision = 3
+        state.wearingRight = .wearing
+        let proto = BudsProtocol(deviceState: state)
+        var sent = [[UInt8]]()
+        var errors = [String]()
+        proto.onError = { errors.append($0) }
+        await proto.start { sent.append($0); return true }
+
+        await proto.startFindMyEarbuds()
+        #expect(sent.isEmpty)
+        #expect(!state.findMyActive)
+        #expect(errors.count == 1)
+
+        proto.stop()
+    }
+
     static func status(revision: UInt8 = 13) -> [UInt8] {
         var p = [UInt8](repeating: 0, count: 46)
         p.replaceSubrange(0..<18, with: [revision, 0, 85, 90, 1, 0, 0x12, 255, 1, 3, 0xBF, 0x23, 1, 0, 0x46, 1, 0x48, 1])
@@ -192,6 +252,70 @@ struct RegressionTests {
         #expect(state.equalizerPreset == .dynamic)
         proto.stop()
         #expect(!state.hasReceivedStatus)
+    }
+
+    @MainActor @Test func touchLockAcknowledgementUsesCommandPolarity() async {
+        let state = DeviceState()
+        state.connectionState = .connected
+        state.hasReceivedStatus = true
+        let proto = BudsProtocol(deviceState: state)
+        var sent = [[UInt8]]()
+        await proto.start { sent.append($0); return true }
+
+        await proto.setTouchpadLocked(true)
+        #expect(sent.count == 1)
+        #expect(!state.touchpadLocked)
+        proto.processData(BudsMessage.request(
+            .universalAcknowledgement,
+            payload: [BudsMessageId.lockTouchpad.rawValue, 0, 1, 1, 1, 1, 1, 1]
+        ).encode())
+        #expect(state.touchpadLocked)
+        #expect(state.touchEnabledFlags == 0x3F)
+
+        proto.stop()
+    }
+
+    @MainActor @Test func touchGestureAcknowledgementKeepsSurfaceUnlocked() async {
+        let state = DeviceState()
+        state.connectionState = .connected
+        state.hasReceivedStatus = true
+        let proto = BudsProtocol(deviceState: state)
+        await proto.start { _ in true }
+
+        await proto.setTapEnabled(bit: 3, enabled: false)
+        proto.processData(BudsMessage.request(
+            .universalAcknowledgement,
+            payload: [BudsMessageId.lockTouchpad.rawValue, 1, 0, 1, 1, 1, 1, 1]
+        ).encode())
+        #expect(!state.touchpadLocked)
+        #expect(state.touchEnabledFlags == 0x37)
+
+        proto.stop()
+    }
+
+    @MainActor @Test func touchActionAndEdgeTapAcknowledgements() async {
+        let state = DeviceState()
+        state.connectionState = .connected
+        state.hasReceivedStatus = true
+        let proto = BudsProtocol(deviceState: state)
+        await proto.start { _ in true }
+
+        await proto.setTouchActions(left: .noiseControl, right: .volume)
+        proto.processData(BudsMessage.request(
+            .universalAcknowledgement,
+            payload: [BudsMessageId.setTouchpadOption.rawValue, 2, 3]
+        ).encode())
+        #expect(state.touchLeftAction == .noiseControl)
+        #expect(state.touchRightAction == .volume)
+
+        await proto.setDoubleTapVolume(true)
+        proto.processData(BudsMessage.request(
+            .universalAcknowledgement,
+            payload: [BudsMessageId.outsideDoubleTap.rawValue, 1]
+        ).encode())
+        #expect(state.doubleTapVolume)
+
+        proto.stop()
     }
 
     @MainActor @Test func deviceIdentification() {

@@ -1,53 +1,56 @@
-// FitTestView.swift
-// Earbud fit/seal test sheet.
-
 import SwiftUI
 
 struct FitTestSheet: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        BudsPage {
+            BudsCard(title: "Earbud fit test", symbol: "ear.badge.checkmark") {
+                Text("Check the seal of both earbuds while wearing them.")
+                    .font(.caption).foregroundStyle(.secondary)
 
-            Text("Checks the seal of each earbud in your ear.")
-                .font(.caption).foregroundStyle(.secondary)
+                if appState.deviceState.fitTestRunning {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Checking seal…").font(.system(size: 12))
+                        Spacer()
+                        Button("Cancel") { Task { await appState.stopFitTest() } }
+                            .controlSize(.small)
+                    }
+                } else {
+                    Button("Start fit test") {
+                        Task { await appState.startFitTest() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
 
-            Button("Start Fit Test") {
-                Task { await appState.startFitTest() }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+                    if appState.deviceState.wearingLeft != .wearing || appState.deviceState.wearingRight != .wearing {
+                        Label("Wear both earbuds for an accurate result.", systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
 
-            .disabled(appState.deviceState.fitTestRunning || appState.deviceState.wearingLeft != .wearing || appState.deviceState.wearingRight != .wearing)
-
-            if appState.deviceState.fitTestRunning {
-                HStack { ProgressView().controlSize(.small); Text("Checking seal…") }
-                Button("Cancel Test") { Task { await appState.stopFitTest() } }
-            }
-
-            if let result = appState.deviceState.fitTestResult {
-                Divider()
-                HStack {
-                    Image(systemName: result == .passed ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundColor(result == .passed ? .green : .orange)
-                    Text(result.description).fontWeight(.medium)
+                if let result = appState.deviceState.fitTestResult {
+                    Divider()
+                    Label(
+                        result.description,
+                        systemImage: result == .passed ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                    )
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(result == .passed ? .green : .orange)
                 }
             }
 
-            Divider()
-
-            Text("Tips for a good seal:")
-                .font(.system(size: 11, weight: .medium))
-            VStack(alignment: .leading, spacing: 4) {
-                Text("• Wear both earbuds in a quiet environment")
-                Text("• Ensure the correct ear tip size")
-                Text("• Adjust position until the test passes")
+            BudsCard(title: "For a better seal", symbol: "lightbulb") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Wear both earbuds in a quiet place.")
+                    Text("Try a different ear tip size.")
+                    Text("Adjust each earbud until the test passes.")
+                }
+                .font(.caption).foregroundStyle(.secondary)
             }
-            .font(.caption).foregroundStyle(.secondary)
         }
-        .padding(16)
-        .frame(width: 320)
         .onDisappear {
             if appState.deviceState.fitTestRunning { Task { await appState.stopFitTest() } }
         }

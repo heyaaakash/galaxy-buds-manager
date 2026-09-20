@@ -11,11 +11,9 @@ enum DevicePersistence {
         static let lastDeviceAddress = "GalaxyBuds_LastDeviceAddress"
         static let lastDeviceName = "GalaxyBuds_LastDeviceName"
         static let lastDeviceModel = "GalaxyBuds_LastDeviceModel"
-        static let autoReconnect = "GalaxyBuds_AutoReconnect"
         static let launchAtLogin = "GalaxyBuds_LaunchAtLogin"
         static let showBatteryInMenuBar = "GalaxyBuds_ShowBatteryInMenuBar"
         static let debugLogging = "GalaxyBuds_DebugLogging"
-        static let lastDisconnectTime = "GalaxyBuds_LastDisconnectTime"
     }
 
     // MARK: - Last Known Device
@@ -43,11 +41,6 @@ enum DevicePersistence {
     }
 
     // MARK: - Preferences
-
-    static var autoReconnect: Bool {
-        get { (UserDefaults.standard.object(forKey: Keys.autoReconnect) as? Bool) ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: Keys.autoReconnect) }
-    }
 
     static var showBatteryInMenuBar: Bool {
         get {
@@ -83,26 +76,5 @@ enum DevicePersistence {
             return (val as? Bool) ?? false
         }
         set { UserDefaults.standard.set(newValue, forKey: Keys.debugLogging) }
-    }
-
-    // MARK: - State Restoration
-
-    static func recordDisconnect() {
-        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Keys.lastDisconnectTime)
-    }
-
-    static var lastDisconnectTime: Date? {
-        guard let interval = UserDefaults.standard.object(forKey: Keys.lastDisconnectTime) as? TimeInterval else {
-            return nil
-        }
-        return Date(timeIntervalSince1970: interval)
-    }
-
-    /// Whether we should attempt reconnection based on time since last disconnect.
-    /// If disconnected for less than 30 seconds, try to reconnect.
-    static var shouldAutoReconnect: Bool {
-        guard autoReconnect, hasLastDevice else { return false }
-        guard let lastDisconnect = lastDisconnectTime else { return true }
-        return Date().timeIntervalSince(lastDisconnect) < 30
     }
 }

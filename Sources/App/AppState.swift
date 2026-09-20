@@ -8,13 +8,6 @@ final class AppState: ObservableObject {
     @Published var showBatteryInMenuBar = DevicePersistence.showBatteryInMenuBar {
         didSet { DevicePersistence.showBatteryInMenuBar = showBatteryInMenuBar }
     }
-    @Published var autoReconnect = DevicePersistence.autoReconnect {
-        didSet {
-            DevicePersistence.autoReconnect = autoReconnect
-            if !autoReconnect { stopReconnect() }
-            else { manuallyDisconnected = false; scheduleReconnect() }
-        }
-    }
     @Published var discoveredDevices: [DiscoveredDevice] = []
     @Published var availablePairedDevices: [DiscoveredDevice] = []
     @Published var lastError: String?
@@ -27,10 +20,8 @@ final class AppState: ObservableObject {
     private var protocol_: BudsProtocol!
     private var subscriptions = Set<AnyCancellable>()
     private var observers: [NSObjectProtocol] = []
-    private var backoffTask: Task<Void, Never>?
     private var initialStateTask: Task<Void, Never>?
-    private var backoffAttempt = 0
-    private var manuallyDisconnected = false
+    private var attachRetryTask: Task<Void, Never>?
     private var isSystemSleeping = false
     private var connectionGeneration = 0
 
@@ -51,34 +42,32 @@ final class AppState: ObservableObject {
             }
         }
         bluetoothManager.onConnectionStateChanged = { [weak self] state in self?.connectionChanged(state) }
-        bluetoothManager.onBluetoothPoweredOn = { [weak self] in self?.scheduleReconnect() }
+        // The app never initiates Bluetooth connections on its own. It only
+        // attaches to Galaxy Buds that macOS has already connected natively —
+        // either right now (system connect notification) or before launch.
+        bluetoothManager.onBluetoothPoweredOn = { [weak self] in self?.attachToSystemConnectedBuds() }
         bluetoothManager.onSystemDeviceConnected = { [weak self] _ in
-            guard let self else { return }
-            self.scanForDevices()
-            self.scheduleReconnect()
+            self?.attachToSystemConnectedBuds()
         }
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.isSystemSleeping = true
-                self.stopReconnect()
                 self.bluetoothManager.disconnect()
             }
         })
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.isSystemSleeping = false; self?.scheduleReconnect() }
+            Task { @MainActor in self?.isSystemSleeping = false; self?.attachToSystemConnectedBuds() }
         })
         scanForDevices()
-        scheduleReconnect()
+        attachToSystemConnectedBuds()
     }
 
     private func connectionChanged(_ state: ConnectionState) {
         deviceState.connectionState = state
         switch state {
         case .connected:
-            stopReconnect()
-            backoffAttempt = 0
             lastError = nil
             initialStateTask?.cancel()
             initialStateTask = Task { @MainActor in
@@ -95,7 +84,8 @@ final class AppState: ObservableObject {
             deviceState.reset()
             deviceState.connectionState = state
             if case .error(let message) = state { lastError = message }
-            scheduleReconnect()
+            // No automatic retry: stay idle until macOS reconnects the earbuds
+            // natively or the user explicitly presses Connect.
         default: break
         }
     }
@@ -108,13 +98,14 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func connect(_ device: DiscoveredDevice) async {
+    private func connect(_ device: DiscoveredDevice, passive: Bool = false) async {
         guard !bluetoothManager.connectionState.isConnectingOrReconnecting else { return }
         if bluetoothManager.connectionState.isConnected {
             if device.id == deviceState.deviceAddress { return }
             bluetoothManager.disconnect()
         }
-        stopReconnect()
+        attachRetryTask?.cancel()
+        attachRetryTask = nil
         connectionGeneration += 1
         let generation = connectionGeneration
         protocol_.stop()
@@ -127,12 +118,10 @@ final class AppState: ObservableObject {
             return await self.bluetoothManager.sendData(bytes)
         }
         guard generation == connectionGeneration, !isSystemSleeping else { return }
-        bluetoothManager.connectToDevice(address: device.id)
+        bluetoothManager.connectToDevice(address: device.id, requireSystemConnected: passive)
     }
 
     func connectToDevice(_ device: DiscoveredDevice) async {
-        manuallyDisconnected = false
-        backoffAttempt = 0
         await connect(device)
     }
 
@@ -148,11 +137,10 @@ final class AppState: ObservableObject {
     func connectToPairedDevice(_ device: DiscoveredDevice) async { await connectToDevice(device) }
 
     func disconnect() {
-        manuallyDisconnected = true
+        attachRetryTask?.cancel()
+        attachRetryTask = nil
         connectionGeneration += 1
-        stopReconnect()
         initialStateTask?.cancel()
-        DevicePersistence.recordDisconnect()
         bluetoothManager.disconnect()
     }
 
@@ -163,8 +151,6 @@ final class AppState: ObservableObject {
     }
 
     func reconnect() async {
-        manuallyDisconnected = false
-        backoffAttempt = 0
         await connectPreferredDevice()
     }
 
@@ -175,27 +161,43 @@ final class AppState: ObservableObject {
             ?? availablePairedDevices.first { $0.id == DevicePersistence.lastDeviceAddress }
             ?? availablePairedDevices.first
         if let preferred { await connect(preferred) }
-        else { scheduleReconnect() }
     }
 
-    private func scheduleReconnect() {
-        guard autoReconnect, !manuallyDisconnected, !isSystemSleeping, bluetoothManager.isBluetoothAvailable,
-              !bluetoothManager.connectionState.isConnected,
-              !bluetoothManager.connectionState.isConnectingOrReconnecting,
-              backoffTask == nil else { return }
-        backoffAttempt += 1
-        let delay = min(60.0, pow(2.0, Double(min(backoffAttempt - 1, 6))))
-        backoffTask = Task { @MainActor in
-            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
-            self.backoffTask = nil
-            guard self.autoReconnect, !self.manuallyDisconnected, !self.isSystemSleeping else { return }
-            await self.connectPreferredDevice()
+    /// Attaches to Galaxy Buds that macOS has *already* connected natively.
+    /// Never initiates a Bluetooth connection itself — if the earbuds are
+    /// connected to another device (e.g. a phone) or were disconnected, the
+    /// app stays idle until macOS connects them to this Mac again.
+    ///
+    /// A system connect event can arrive before the system link and service
+    /// records are ready, so the attach is re-checked a few times over ~13s.
+    /// This is bounded and strictly event-driven; it never loops forever.
+    private func attachToSystemConnectedBuds() {
+        attachRetryTask?.cancel()
+        attachRetryTask = Task { @MainActor in
+            for delay in [0.0, 1.5, 4.0, 8.0] {
+                if delay > 0 {
+                    do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
+                }
+                guard !Task.isCancelled else { return }
+                if self.tryAttachToSystemConnectedBuds() { return }
+            }
         }
     }
 
-    private func stopReconnect() {
-        backoffTask?.cancel()
-        backoffTask = nil
+    /// Returns true when the app is attached (or attaching) to the earbuds.
+    @discardableResult
+    private func tryAttachToSystemConnectedBuds() -> Bool {
+        guard !isSystemSleeping, !bluetoothManager.connectionState.isConnected else {
+            return bluetoothManager.connectionState.isConnected
+        }
+        if bluetoothManager.connectionState.isConnectingOrReconnecting { return true }
+        scanForDevices()
+        guard let connected = availablePairedDevices.first(where: { bluetoothManager.isDeviceConnected(address: $0.id) }) else {
+            return false
+        }
+        ProtocolLogger.log(.info, "macOS reports \"\(connected.name)\" connected — attaching passively")
+        Task { @MainActor in await self.connect(connected, passive: true) }
+        return true
     }
 
     func setTapEnabled(bit: UInt8, enabled: Bool) async { await protocol_.setTapEnabled(bit: bit, enabled: enabled) }

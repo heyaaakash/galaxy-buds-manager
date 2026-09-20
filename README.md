@@ -6,14 +6,16 @@ A native menu-bar manager for Samsung Galaxy Buds2 Pro (SM-R510), requiring macO
 
 1. Pair the earbuds in **System Settings → Bluetooth**.
 2. Open their case or wear them, and allow the app Bluetooth access.
-3. Launch the app. **Settings → General → Connect automatically** controls startup, wake, and reconnect behavior. It defaults to enabled on a fresh install and preserves existing preferences.
-4. If automatic connection is disabled, select **Connect** in the menu.
+3. Launch the menu-bar app and click the earbuds icon. Connect the earbuds to this Mac in **System Settings → Bluetooth** (or via the Control Center); the app attaches automatically as soon as macOS connects them.
+4. To attach without using System Settings first, select **Connect** in the menu. The app never reconnects on its own — connection is always driven by macOS or an explicit Connect action.
 
 Discovery uses macOS paired devices and system connection notifications. Configuration uses the Samsung service UUID `2e73a4ad-332d-41fc-90e2-16bef06523f2`, resolved through SDP. Audio remains managed by macOS. Renamed earbuds are remembered by address after a successful connection; unrelated Buds models are excluded from automatic name matching.
 
-Disconnect/Cancel suppresses automatic reconnection until an explicit Connect or re-enabling automatic connection. Bluetooth power changes and sleep/wake are handled separately. Settings remain disabled until a valid extended device snapshot arrives. Commands update the UI when the earbuds confirm them; timeouts and Bluetooth errors are shown in the menu.
+The app is passive with respect to Bluetooth: it never initiates or retries connections in the background. If the earbuds are connected to another device (e.g. a phone), or you disconnect them manually, the app stays idle until macOS connects them to this Mac again. Bluetooth power changes and sleep/wake only re-check whether macOS already has the earbuds connected. Settings remain disabled until a valid extended device snapshot arrives. Commands update the UI when the earbuds confirm them; timeouts and Bluetooth errors are shown in the menu.
 
 ## Controls
+
+The connected-device menu shows battery levels, a quick ANC/Ambient/Off switch, and grouped Sound and Utilities pages. The complete main menu fits without scrolling. The footer opens Settings and Device Info; More contains the protocol log and Quit. Detail pages keep Back visible and scroll only when their controls exceed the available space. **Settings** has General, Bluetooth, Device, and Advanced sections. Device controls stay unavailable until the earbuds send their settings; connection and app settings remain accessible.
 
 - Live left/right/case battery, wearing state, and charging data
 - ANC, ambient, Off, noise control with one earbud
@@ -39,19 +41,22 @@ With a working Swift toolchain / macOS SDK:
 ./run.sh
 ```
 
-This incrementally builds, bundles, ad-hoc signs, and launches the app. It always checks source changes, preventing stale binaries. To build a release app and DMG:
+This incrementally builds, bundles, ad-hoc signs, and launches the app. It checks source changes before launch. To build a release app and DMG:
 
 ```sh
 ./build_app.sh
 ```
 
-`SDKROOT`, `SWIFT_BUILD_PATH`, `CONFIGURATION` (debug/release), and `SKIP_DMG=1` are supported overrides. For example, this machine's macOS 27 SDK was missing a SwiftUI compiler plugin, so verification used its installed macOS 26.5 SDK:
+The installer is written to `dist/GalaxyBuds2-Pro-Manager.dmg`; the app bundle is at `.build/Galaxy Buds2 Pro Manager.app`. Open the DMG and drag the app to Applications.
+
+`SDKROOT`, `SWIFT_BUILD_PATH`, `CONFIGURATION` (debug/release), and `SKIP_DMG=1` are supported build overrides. If the active SDK or debug-symbol generator causes a build failure, select an installed SDK and optionally omit debug symbols with `GBM_DEBUG_INFO_FORMAT=none`:
 
 ```sh
-SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./run.sh
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
+GBM_DEBUG_INFO_FORMAT=none ./build_app.sh
 ```
 
-Run the app bundle rather than a bare `swift run` executable so macOS can associate Bluetooth permission with its bundle identity. Ad-hoc signing is for local development; this build is not notarized for distribution.
+Run the app bundle rather than a bare `swift run` executable so macOS can associate Bluetooth permission with its bundle identity. The script uses the macOS `sips`, `iconutil`, `codesign`, and `hdiutil` tools. Its ad-hoc signature is for local use; the DMG is not notarized for distribution.
 
 ## Tests and diagnostics
 
@@ -61,10 +66,11 @@ swift test
 
 `RegressionTests.swift` uses Swift Testing (Swift 6+), including a known CRC vector, corrupted/split frames, real-model status layouts, revision boundaries, command acknowledgement and cleanup, and bounded diagnostic decoders. Legacy XCTest tests also run where XCTest is installed. Check the test count: a toolchain without either framework cannot validate the tests.
 
-If the Command Line Tools build engine omits its installed Testing plugin:
+If the Command Line Tools build engine omits its installed Testing plugin, pass its plugin path. On systems where debug-symbol generation is blocked, add `-debug-info-format none`:
 
 ```sh
 swift test --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
+  -debug-info-format none \
   -Xswiftc -plugin-path \
   -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing
 ```

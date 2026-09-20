@@ -12,6 +12,7 @@ CONFIGURATION="${CONFIGURATION:-release}"
 SWIFT_ARGS=(--disable-sandbox --configuration "$CONFIGURATION")
 if [ -n "${SWIFT_BUILD_PATH:-}" ]; then SWIFT_ARGS+=(--scratch-path "$SWIFT_BUILD_PATH"); fi
 if [ -n "${SDKROOT:-}" ]; then SWIFT_ARGS+=(--sdk "$SDKROOT"); fi
+if [ -n "${GBM_DEBUG_INFO_FORMAT:-}" ]; then SWIFT_ARGS+=(-debug-info-format "$GBM_DEBUG_INFO_FORMAT"); fi
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 DMG_NAME="$BUILD_DIR/GalaxyBuds2-Pro-Manager"
 

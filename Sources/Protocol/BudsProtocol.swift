@@ -349,7 +349,8 @@ final class BudsProtocol {
         case .setDetectConversations: deviceState.detectConversations = enabled
         case .setDetectConversationsDuration: deviceState.detectConversationsDuration = Int(value)
         case .lockTouchpad:
-            deviceState.touchpadLocked = enabled
+            // The lock command uses 0 for locked and 1 for unlocked.
+            deviceState.touchpadLocked = value == 0
             if message.payload.count >= 5 {
                 let bits: [UInt8] = [3, 2, 1, 0, 4, 5]
                 var flags: UInt8 = 0
@@ -450,17 +451,34 @@ final class BudsProtocol {
     }
 
     // Find My Earbuds
+    // Start/stop are fire-and-forget: the earbuds confirm via findMyEarbudsStart/Stop
+    // notifications rather than response frames, so response tracking would just
+    // freeze the page and then fail with a spurious timeout.
     func startFindMyEarbuds() async {
-        guard !deviceState.isAnyBudWorn else { onError?("Remove your earbuds before ringing them."); return }
-        await sendCommand(FindMyEarbudsEncoder.start()) { [weak self] result in
-            if case .success = result { Task { @MainActor in self?.deviceState.findMyActive = true } }
+        guard deviceState.connectionState.isConnected, deviceState.hasReceivedStatus else {
+            onError?("Wait for the earbuds to connect and finish syncing.")
+            return
         }
+        var message = FindMyEarbudsEncoder.start()
+        if deviceState.isAnyBudWorn {
+            // Revision >= 4 supports a quieter ring while a bud is being worn.
+            guard spec.supports(.fmgRingWhileWearing, firmwareRevision: deviceState.interfaceRevision) else {
+                onError?("Remove your earbuds before ringing them.")
+                return
+            }
+            message = FindMyEarbudsEncoder.startOnWearing()
+        }
+        deviceState.findMyActive = true
+        deviceState.findMyLeftMuted = false
+        deviceState.findMyRightMuted = false
+        await sendFireAndForget(message)
     }
 
     func stopFindMyEarbuds() async {
-        await sendCommand(FindMyEarbudsEncoder.stop()) { [weak self] result in
-            if case .success = result { Task { @MainActor in self?.deviceState.findMyActive = false } }
-        }
+        deviceState.findMyActive = false
+        deviceState.findMyLeftMuted = false
+        deviceState.findMyRightMuted = false
+        await sendFireAndForget(FindMyEarbudsEncoder.stop())
     }
 
     func muteFindMyEarbud(left: Bool, right: Bool) async {
@@ -536,7 +554,10 @@ final class BudsProtocol {
 
     // Fit Test
     func startFitTest() async {
-        guard deviceState.connectionState.isConnected, deviceState.hasReceivedStatus else { return }
+        guard deviceState.connectionState.isConnected, deviceState.hasReceivedStatus else {
+            onError?("Wait for the earbuds to connect and finish syncing.")
+            return
+        }
         deviceState.fitTestResult = nil
         deviceState.fitTestRunning = true
         await sendFireAndForget(FitTestEncoder.startCheck())

@@ -17,6 +17,7 @@ struct GalaxyBudsManagerApp: App {
                 .environmentObject(appState)
         }
         .menuBarExtraStyle(.window)
+        .windowResizability(.contentSize)
 
         Settings {
             SettingsView()
