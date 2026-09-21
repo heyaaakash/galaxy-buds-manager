@@ -2,6 +2,12 @@
 .swiftpm/
 Package.resolved
 
+# Swift build output
+.build/
+
+# Local tool metadata
+.freebuff/
+
 # Xcode
 *.xcodeproj/
 *.xcworkspace/
