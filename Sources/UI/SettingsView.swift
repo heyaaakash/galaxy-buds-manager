@@ -75,6 +75,11 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             BudsCard(title: "Connection", symbol: "antenna.radiowaves.left.and.right") {
                 BudsInfoRow(title: "Status", value: appState.deviceState.connectionState.description)
+                if let name = appState.lastObservedBluetoothDeviceName,
+                   let isGalaxyBuds = appState.lastObservedWasGalaxyBuds {
+                    BudsInfoRow(title: "Observed device", value: name)
+                    BudsInfoRow(title: "Galaxy Buds", value: isGalaxyBuds ? "Yes" : "No")
+                }
                 if let address = DevicePersistence.lastDeviceAddress {
                     BudsInfoRow(title: "Address", value: address)
                 }
@@ -85,12 +90,12 @@ struct SettingsView: View {
             BudsCard(title: "Actions", symbol: "arrow.triangle.2.circlepath") {
                 HStack(spacing: 6) {
                     Button("Scan") { appState.scanForDevices() }
-                    Button("Reconnect") { Task { await appState.reconnect() } }
+                    Button("Attach connected Buds") { Task { await appState.reconnect() } }
                     Button("Forget") { appState.forgetDevice() }
                         .foregroundStyle(.red)
                 }
                 .controlSize(.small)
-                Text("Configuration uses Bluetooth SPP (RFCOMM).")
+                Text("Connect in macOS first. The app only opens settings on an existing Bluetooth connection.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

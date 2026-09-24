@@ -145,7 +145,8 @@ struct MenuBarPopover: View {
             if !appState.deviceState.hasReceivedStatus {
                 HStack(spacing: 7) {
                     ProgressView().controlSize(.small)
-                    Text("Syncing settings…").font(.caption)
+                    Text(appState.activeProfile.hasControls ? "Syncing settings…" : "Waiting for battery status…")
+                        .font(.caption)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
@@ -160,19 +161,27 @@ struct MenuBarPopover: View {
                     .padding(.bottom, 7)
             }
 
-            Divider()
+            if appState.activeProfile.hasControls {
+                Divider()
 
-            noiseControlQuickSwitch
-                .disabled(!appState.canControl)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                noiseControlQuickSwitch
+                    .disabled(!appState.canControl)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
 
-            Divider()
+                Divider()
 
-            quickInfoSection
-                .disabled(!appState.canControl)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
+                quickInfoSection
+                    .disabled(!appState.canControl)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+            } else {
+                Text("Battery display only for this model. Controls are unavailable until its protocol is verified.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
+            }
 
             Divider()
 
@@ -211,6 +220,7 @@ struct MenuBarPopover: View {
                         Button(dev.name) {
                             Task { await appState.connectToPairedDevice(dev) }
                         }
+                        .disabled(!dev.canAttach)
                     }
                 } label: {
                     Image(systemName: "chevron.up.chevron.down")
@@ -274,13 +284,22 @@ struct MenuBarPopover: View {
                                 Text(device.id)
                                     .font(.system(size: 10, design: .monospaced))
                                     .foregroundStyle(.secondary)
+                                Text(device.isSystemConnected ? "Connected in macOS" : "Connect in macOS first")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                if !device.profile.hasControls {
+                                    Text(device.profile.canConnect ? "Battery only" : "Protocol not supported")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             Spacer(minLength: 4)
-                            Button("Connect") {
+                            Button("Attach") {
                                 Task { await appState.connectToPairedDevice(device) }
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
+                            .disabled(!device.canAttach)
                         }
                     }
                 }
@@ -310,7 +329,7 @@ struct MenuBarPopover: View {
                 .frame(width: 42, height: 42)
                 .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
 
-            Text("Galaxy Buds2 Pro")
+            Text("Galaxy Buds")
                 .font(.system(size: 14, weight: .semibold))
 
             Text("Pair your earbuds in Bluetooth settings, then open their case to connect.")
@@ -324,7 +343,7 @@ struct MenuBarPopover: View {
             }
 
             HStack(spacing: 8) {
-                Button("Connect") {
+                Button("Check connection") {
                     Task { await appState.reconnect() }
                 }
                 .buttonStyle(.borderedProminent)

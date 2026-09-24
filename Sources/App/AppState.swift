@@ -12,9 +12,12 @@ final class AppState: ObservableObject {
     @Published var availablePairedDevices: [DiscoveredDevice] = []
     @Published var lastError: String?
     @Published var showDebugWindow = false
+    @Published private(set) var activeProfile: BudsConnectionProfile = .buds2Pro
+    @Published private(set) var lastObservedBluetoothDeviceName: String?
+    @Published private(set) var lastObservedWasGalaxyBuds: Bool?
     var bluetoothNeedsOnboarding: Bool { availablePairedDevices.isEmpty }
     var hasPairedDevices: Bool { !availablePairedDevices.isEmpty && !deviceState.connectionState.isConnected }
-    var canControl: Bool { deviceState.connectionState.isConnected && deviceState.hasReceivedStatus && deviceState.pendingCommands.isEmpty }
+    var canControl: Bool { activeProfile.hasControls && deviceState.connectionState.isConnected && deviceState.hasReceivedStatus && deviceState.pendingCommands.isEmpty }
 
     private(set) var bluetoothManager: BluetoothManager!
     private var protocol_: BudsProtocol!
@@ -35,10 +38,12 @@ final class AppState: ObservableObject {
         bluetoothManager.onDataReceived = { [weak self] data in self?.protocol_.processData(data) }
         bluetoothManager.onDeviceConnected = { [weak self] device in
             guard let self else { return }
-            self.deviceState.deviceName = device.name ?? "Galaxy Buds2 Pro"
+            self.deviceState.deviceName = device.name ?? "Galaxy Buds"
             if let address = device.addressString {
                 self.deviceState.deviceAddress = address
-                DevicePersistence.saveLastDevice(address: address, name: self.deviceState.deviceName)
+                if self.activeProfile.hasControls {
+                    DevicePersistence.saveLastDevice(address: address, name: self.deviceState.deviceName)
+                }
             }
         }
         bluetoothManager.onConnectionStateChanged = { [weak self] state in self?.connectionChanged(state) }
@@ -46,8 +51,21 @@ final class AppState: ObservableObject {
         // attaches to Galaxy Buds that macOS has already connected natively —
         // either right now (system connect notification) or before launch.
         bluetoothManager.onBluetoothPoweredOn = { [weak self] in self?.attachToSystemConnectedBuds() }
-        bluetoothManager.onSystemDeviceConnected = { [weak self] _ in
-            self?.attachToSystemConnectedBuds()
+        bluetoothManager.onSystemDeviceConnected = { [weak self] device in
+            guard let self else { return }
+            // Classify every macOS connection event without querying or
+            // opening a connection to unrelated Bluetooth devices.
+            self.lastObservedBluetoothDeviceName = device.name
+            self.lastObservedWasGalaxyBuds = device.isGalaxyBuds
+            ProtocolLogger.log(.info, "Connected device \"\(device.name)\" is Galaxy Buds: \(device.isGalaxyBuds)")
+            if device.isGalaxyBuds {
+                self.scanForDevices()
+            }
+            // The connect notification can precede isConnected() becoming true.
+            // Retry only local status checks; attach after macOS confirms the link.
+            if device.isGalaxyBuds && device.profile.canConnect {
+                self.attachToSystemConnectedBuds()
+            }
         }
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -75,7 +93,9 @@ final class AppState: ObservableObject {
                 await self.protocol_.requestInitialState()
                 do { try await Task.sleep(nanoseconds: 10_000_000_000) } catch { return }
                 if !self.deviceState.hasReceivedStatus {
-                    self.lastError = "Connected, but the earbuds have not sent their settings. Open the case, disconnect other managers, and reconnect."
+                    self.lastError = self.activeProfile.hasControls
+                        ? "Connected, but the earbuds have not sent their settings. Open the case, disconnect other managers, and reconnect."
+                        : "Connected, but no battery status was received from this model. Open the case and reconnect."
                 }
             }
         case .disconnected, .error:
@@ -84,8 +104,8 @@ final class AppState: ObservableObject {
             deviceState.reset()
             deviceState.connectionState = state
             if case .error(let message) = state { lastError = message }
-            // No automatic retry: stay idle until macOS reconnects the earbuds
-            // natively or the user explicitly presses Connect.
+            // No automatic Bluetooth reconnect: stay idle until macOS
+            // reconnects the earbuds or the user attaches to an existing link.
         default: break
         }
     }
@@ -93,12 +113,26 @@ final class AppState: ObservableObject {
     func scanForDevices() {
         discoveredDevices = bluetoothManager.findPairedGalaxyBuds()
         availablePairedDevices = discoveredDevices.filter(\.isGalaxyBuds)
+        if lastObservedBluetoothDeviceName == nil,
+           let connected = discoveredDevices.first(where: \.isSystemConnected) {
+            lastObservedBluetoothDeviceName = connected.name
+            lastObservedWasGalaxyBuds = connected.isGalaxyBuds
+        }
         if availablePairedDevices.isEmpty {
-            lastError = "Pair your Galaxy Buds2 Pro in System Settings → Bluetooth, then open their case."
+            lastError = "Pair your Galaxy Buds in System Settings → Bluetooth, then open their case."
         }
     }
 
-    private func connect(_ device: DiscoveredDevice, passive: Bool = false) async {
+    private func connect(_ device: DiscoveredDevice) async {
+        guard device.isGalaxyBuds else { return }
+        guard device.profile.canConnect else {
+            lastError = "This Galaxy Buds model is detected, but its configuration protocol is not supported yet."
+            return
+        }
+        guard bluetoothManager.isDeviceConnected(address: device.id) else {
+            lastError = "Connect \(device.name) in macOS Bluetooth settings first. This app will attach automatically."
+            return
+        }
         guard !bluetoothManager.connectionState.isConnectingOrReconnecting else { return }
         if bluetoothManager.connectionState.isConnected {
             if device.id == deviceState.deviceAddress { return }
@@ -108,17 +142,18 @@ final class AppState: ObservableObject {
         attachRetryTask = nil
         connectionGeneration += 1
         let generation = connectionGeneration
+        activeProfile = device.profile
         protocol_.stop()
         deviceState.reset()
         deviceState.deviceName = device.name
         deviceState.deviceAddress = device.id
         lastError = nil
-        await protocol_.start { [weak self] bytes in
+        await protocol_.start(profile: device.profile) { [weak self] bytes in
             guard let self, generation == self.connectionGeneration else { return false }
             return await self.bluetoothManager.sendData(bytes)
         }
         guard generation == connectionGeneration, !isSystemSleeping else { return }
-        bluetoothManager.connectToDevice(address: device.id, requireSystemConnected: passive)
+        bluetoothManager.connectToDevice(address: device.id, profile: device.profile)
     }
 
     func connectToDevice(_ device: DiscoveredDevice) async {
@@ -128,7 +163,7 @@ final class AppState: ObservableObject {
     func connectToAddress(_ address: String) async {
         scanForDevices()
         guard let device = availablePairedDevices.first(where: { $0.id == address }) else {
-            lastError = "This device is no longer paired as a Buds2 Pro. Check Bluetooth Settings."
+            lastError = "This Galaxy Buds device is no longer paired. Check Bluetooth Settings."
             return
         }
         await connectToDevice(device)
@@ -157,10 +192,14 @@ final class AppState: ObservableObject {
     private func connectPreferredDevice() async {
         guard !isSystemSleeping else { return }
         scanForDevices()
-        let preferred = availablePairedDevices.first { bluetoothManager.isDeviceConnected(address: $0.id) }
-            ?? availablePairedDevices.first { $0.id == DevicePersistence.lastDeviceAddress }
-            ?? availablePairedDevices.first
-        if let preferred { await connect(preferred) }
+        let connectable = availablePairedDevices.filter { $0.canAttach }
+        let preferred = connectable.first { $0.profile.hasControls && bluetoothManager.isDeviceConnected(address: $0.id) }
+            ?? connectable.first { bluetoothManager.isDeviceConnected(address: $0.id) }
+        if let preferred {
+            await connect(preferred)
+        } else {
+            lastError = "Connect your Galaxy Buds in macOS Bluetooth settings first. This app will attach automatically."
+        }
     }
 
     /// Attaches to Galaxy Buds that macOS has *already* connected natively.
@@ -192,11 +231,13 @@ final class AppState: ObservableObject {
         }
         if bluetoothManager.connectionState.isConnectingOrReconnecting { return true }
         scanForDevices()
-        guard let connected = availablePairedDevices.first(where: { bluetoothManager.isDeviceConnected(address: $0.id) }) else {
+        let connected = availablePairedDevices.first { $0.canAttach && $0.profile.hasControls && bluetoothManager.isDeviceConnected(address: $0.id) }
+            ?? availablePairedDevices.first { $0.canAttach && bluetoothManager.isDeviceConnected(address: $0.id) }
+        guard let connected else {
             return false
         }
         ProtocolLogger.log(.info, "macOS reports \"\(connected.name)\" connected — attaching passively")
-        Task { @MainActor in await self.connect(connected, passive: true) }
+        Task { @MainActor in await self.connect(connected) }
         return true
     }
 

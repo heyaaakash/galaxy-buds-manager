@@ -34,7 +34,7 @@ enum BudsConstants {
     /// Minimum packet size: SOM(1) + Header(2) + MsgId(1) + CRC(2) + EOM(1) = 7.
     static let minimumPacketSize = 7
 
-    /// Samsung's standard SPP UUID for newer models (Buds2 Pro, Buds FE, etc.)
+    /// Standard SPP service UUID used by Buds+, Buds Live, and Buds Pro.
     static let sppUuid = "00001101-0000-1000-8000-00805F9B34FB"
 
     /// Buds2 Pro configuration service, advertised through classic Bluetooth SDP.

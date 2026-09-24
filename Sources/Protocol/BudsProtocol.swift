@@ -16,6 +16,7 @@ final class BudsProtocol {
     private var sendHandler: (([UInt8]) async -> Bool)?
     private var handshakeComplete = false
     private var sessionGeneration = 0
+    private var profile: BudsConnectionProfile = .buds2Pro
 
     init(deviceState: DeviceState) {
         self.deviceState = deviceState
@@ -25,8 +26,10 @@ final class BudsProtocol {
 
     // MARK: - Lifecycle
 
-    func start(sendHandler: @escaping ([UInt8]) async -> Bool) async {
+    func start(profile: BudsConnectionProfile = .buds2Pro,
+               sendHandler: @escaping ([UInt8]) async -> Bool) async {
         sessionGeneration += 1
+        self.profile = profile
         self.sendHandler = sendHandler
         handshakeComplete = false
         incomingBuffer.removeAll()
@@ -77,6 +80,17 @@ final class BudsProtocol {
     }
 
     private func processMessage(_ message: BudsMessage) {
+        if !profile.hasControls {
+            guard message.id == .extendedStatusUpdated || message.id == .statusUpdated else { return }
+            do {
+                let status = try BasicBudsStatusDecoder(
+                    payload: message.payload, extended: message.id == .extendedStatusUpdated)
+                status.apply(to: deviceState)
+            } catch {
+                ProtocolLogger.log(.warning, "Ignored truncated basic status: \(error)")
+            }
+            return
+        }
         if message.id == .universalAcknowledgement, let raw = message.payload.first {
             let response = BudsMessage(id: .from(raw), type: .response, payload: Array(message.payload.dropFirst()), rawID: raw)
             applyAcknowledgedSetting(response)
@@ -267,6 +281,7 @@ final class BudsProtocol {
 
     /// Public entry point called by AppState after connection.
     func requestInitialState() async {
+        guard profile.hasControls else { return }
         guard !handshakeComplete, sendHandler != nil, deviceState.connectionState.isConnected else { return }
         handshakeComplete = true
         ProtocolLogger.log(.info, "Sending Galaxy Buds2 Pro handshake & initial queries...")
@@ -289,6 +304,11 @@ final class BudsProtocol {
         _ message: BudsMessage,
         completion: ((Result<BudsMessage, BudsError>) -> Void)? = nil
     ) async {
+        guard profile.hasControls else {
+            onError?("Controls are not yet available for this Galaxy Buds model.")
+            completion?(.failure(.notConnected))
+            return
+        }
         guard deviceState.connectionState.isConnected, deviceState.hasReceivedStatus else {
             onError?("Wait for the earbuds to connect and finish syncing.")
             completion?(.failure(.notConnected))
@@ -310,6 +330,7 @@ final class BudsProtocol {
     }
 
     func sendFireAndForget(_ message: BudsMessage) async {
+        guard profile.hasControls else { return }
         ProtocolLogger.logOutgoing(message)
         let raw = message.encode()
         if let handler = sendHandler, !(await handler(raw)) {
@@ -455,6 +476,7 @@ final class BudsProtocol {
     // notifications rather than response frames, so response tracking would just
     // freeze the page and then fail with a spurious timeout.
     func startFindMyEarbuds() async {
+        guard profile.hasControls else { return }
         guard deviceState.connectionState.isConnected, deviceState.hasReceivedStatus else {
             onError?("Wait for the earbuds to connect and finish syncing.")
             return
@@ -554,6 +576,7 @@ final class BudsProtocol {
 
     // Fit Test
     func startFitTest() async {
+        guard profile.hasControls else { return }
         guard deviceState.connectionState.isConnected, deviceState.hasReceivedStatus else {
             onError?("Wait for the earbuds to connect and finish syncing.")
             return

@@ -61,7 +61,7 @@ struct FeatureRule: Sendable {
 // MARK: - Device Model
 
 /// Samsung Galaxy Buds model identifiers.
-enum BudsModel: String, Sendable {
+enum BudsModel: String, CaseIterable, Sendable {
     case buds2Pro = "SM-R510"
     case budsPro  = "SM-R190"
     case buds2    = "SM-R177"

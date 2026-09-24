@@ -1,5 +1,5 @@
 // BluetoothManager.swift
-// Bluetooth discovery and RFCOMM connection for Samsung Galaxy Buds2 Pro on macOS.
+// Bluetooth discovery and RFCOMM connection for Samsung Galaxy Buds on macOS.
 //
 // Uses IOBluetooth for paired device lookup and RFCOMM/SPP data exchange.
 // CoreBluetooth is only used for optional BLE scanning — it is NOT required
@@ -7,7 +7,97 @@
 
 import Foundation
 import CoreBluetooth
+import CoreAudio
 @preconcurrency import IOBluetooth
+
+/// CoreAudio only publishes a Bluetooth audio endpoint while macOS has the
+/// device connected. Its UID begins with the same address as IOBluetooth's
+/// paired-device record (for example, AA-BB-CC-DD-EE-FF:output).
+enum SystemBluetoothConnection {
+    static func normalizedAddress(_ value: String) -> String {
+        value.uppercased().filter { $0.isHexDigit }
+    }
+
+    static func addressFromAudioUID(_ uid: String) -> String? {
+        let rawAddress = uid.components(separatedBy: ":").first ?? ""
+        let address = normalizedAddress(rawAddress)
+        return address.count == 12 ? address : nil
+    }
+
+    static func connectedAudioAddresses() -> Set<String> {
+        var property = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil, &size) == noErr,
+              size >= MemoryLayout<AudioDeviceID>.size else {
+            return []
+        }
+        var devices = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard devices.withUnsafeMutableBytes({ bytes in
+            AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil, &size, bytes.baseAddress!)
+        }) == noErr else { return [] }
+
+        var addresses = Set<String>()
+        for device in devices {
+            var transportProperty = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyTransportType,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            var transport: UInt32 = 0
+            var transportSize = UInt32(MemoryLayout<UInt32>.size)
+            guard AudioObjectGetPropertyData(device, &transportProperty, 0, nil, &transportSize, &transport) == noErr,
+                  transport == kAudioDeviceTransportTypeBluetooth else { continue }
+
+            var uidProperty = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceUID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            var uid: Unmanaged<CFString>?
+            var uidSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            guard AudioObjectGetPropertyData(device, &uidProperty, 0, nil, &uidSize, &uid) == noErr,
+                  let uid else { continue }
+            if let address = addressFromAudioUID(uid.takeUnretainedValue() as String) {
+                addresses.insert(address)
+            }
+        }
+        return addresses
+    }
+
+    static func isConnected(_ device: IOBluetoothDevice, audioAddresses: Set<String>? = nil) -> Bool {
+        if device.isConnected() { return true }
+        guard let address = device.addressString else { return false }
+        return (audioAddresses ?? connectedAudioAddresses()).contains(normalizedAddress(address))
+    }
+}
+
+/// Connection behavior is chosen before opening the Samsung service. Other
+/// models only use the common battery fields; SM-R510 retains its full path.
+enum BudsConnectionProfile: Equatable {
+    case buds2Pro
+    case basicStandardSPP
+    case basicNewSPP
+    case unsupported
+
+    var canConnect: Bool { self != .unsupported }
+    var hasControls: Bool { self == .buds2Pro }
+    var serviceUUID: String {
+        self == .basicStandardSPP ? BudsConstants.sppUuid : BudsConstants.sppNewUuid
+    }
+
+    static func identify(name: String, rememberedAddress: Bool = false) -> Self {
+        if DiscoveredDevice.isBuds2ProName(name) || rememberedAddress { return .buds2Pro }
+        let compact = name.lowercased().filter { !$0.isWhitespace }
+        if ["budsplus", "buds+", "budslive", "budspro", "sm-r175", "sm-r180", "sm-r190"].contains(where: compact.contains) {
+            return .basicStandardSPP
+        }
+        if ["buds2", "budsfe", "buds3", "sm-r177", "sm-r400", "sm-r630"].contains(where: compact.contains) {
+            return .basicNewSPP
+        }
+        return .unsupported
+    }
+}
 
 // MARK: - Bluetooth Device
 
@@ -16,8 +106,23 @@ struct DiscoveredDevice: Identifiable {
     let name: String
     let rssi: Int
     let isGalaxyBuds: Bool
+    let isSystemConnected: Bool
+
+    var profile: BudsConnectionProfile {
+        BudsConnectionProfile.identify(name: name, rememberedAddress: id == DevicePersistence.lastDeviceAddress)
+    }
+
+    var canAttach: Bool { isGalaxyBuds && isSystemConnected && profile.canConnect }
 
     static func isGalaxyBudsName(_ name: String) -> Bool {
+        if isBuds2ProName(name) { return true }
+        let lower = name.lowercased()
+        let compact = lower.replacingOccurrences(of: " ", with: "")
+        return lower.hasPrefix("galaxy buds") || lower.hasPrefix("samsung galaxy buds")
+            || BudsModel.allCases.contains { compact.contains($0.rawValue.lowercased()) }
+    }
+
+    static func isBuds2ProName(_ name: String) -> Bool {
         let lower = name.lowercased()
         let compact = lower.replacingOccurrences(of: " ", with: "")
         return compact.contains("buds2pro") || lower.contains("sm-r510")
@@ -50,6 +155,7 @@ final class BluetoothManager: NSObject, ObservableObject {
     private var isConnecting = false
     private var cancelRequested = false
     private var attemptGeneration = 0
+    private var targetProfile: BudsConnectionProfile = .buds2Pro
 
     // MARK: - Callbacks
 
@@ -57,7 +163,7 @@ final class BluetoothManager: NSObject, ObservableObject {
     var onConnectionStateChanged: ((ConnectionState) -> Void)?
     var onDeviceDiscovered: ((DiscoveredDevice) -> Void)?
     var onBluetoothPoweredOn: (() -> Void)?
-    var onSystemDeviceConnected: ((IOBluetoothDevice) -> Void)?
+    var onSystemDeviceConnected: ((DiscoveredDevice) -> Void)?
     var onDeviceConnected: ((IOBluetoothDevice) -> Void)?
 
     private var connectNotification: IOBluetoothUserNotification?
@@ -90,13 +196,20 @@ final class BluetoothManager: NSObject, ObservableObject {
     }
 
     @objc private func handleDeviceConnectedNotification(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
-        let name = device.name ?? ""
         let address = device.addressString ?? ""
+        let cachedName = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice])?
+            .first(where: { $0.addressString == address })?.name
+        let rememberedName = address == DevicePersistence.lastDeviceAddress ? DevicePersistence.lastDeviceName : nil
+        let name = device.name ?? cachedName ?? rememberedName ?? "Unknown Bluetooth device"
         Task { @MainActor in
             ProtocolLogger.log(.info, "System Bluetooth device connected: \"\(name)\" [\(address)]")
-            // Forward every system connection; AppState scans and only attaches
-            // to recognized Galaxy Buds.
-            self.onSystemDeviceConnected?(device)
+            guard !address.isEmpty else { return }
+            let isBuds = DiscoveredDevice.isGalaxyBudsName(name) || address == DevicePersistence.lastDeviceAddress
+            let connected = SystemBluetoothConnection.isConnected(device)
+            let discovered = DiscoveredDevice(id: address, name: name,
+                rssi: device.isConnected() ? Int(device.rawRSSI()) : 0,
+                isGalaxyBuds: isBuds, isSystemConnected: connected)
+            self.onSystemDeviceConnected?(discovered)
         }
     }
 
@@ -164,6 +277,7 @@ final class BluetoothManager: NSObject, ObservableObject {
         ProtocolLogger.log(.info, "Searching for paired Galaxy Buds via IOBluetooth...")
 
         let pairedDevices = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] ?? []
+        let connectedAudioAddresses = SystemBluetoothConnection.connectedAudioAddresses()
         var results: [DiscoveredDevice] = []
         var seenAddresses: Set<String> = []
 
@@ -174,8 +288,8 @@ final class BluetoothManager: NSObject, ObservableObject {
             seenAddresses.insert(address)
 
             let isBuds = DiscoveredDevice.isGalaxyBudsName(name) || address == DevicePersistence.lastDeviceAddress
-            let connected = device.isConnected()
-            let rssi = connected ? Int(device.rawRSSI()) : 0
+            let connected = SystemBluetoothConnection.isConnected(device, audioAddresses: connectedAudioAddresses)
+            let rssi = device.isConnected() ? Int(device.rawRSSI()) : 0
 
             if isBuds {
                 ProtocolLogger.log(.info, "  → Galaxy Buds: \"\(name)\" [\(address)] connected=\(connected)")
@@ -185,7 +299,8 @@ final class BluetoothManager: NSObject, ObservableObject {
                 id: address,
                 name: name,
                 rssi: rssi,
-                isGalaxyBuds: isBuds
+                isGalaxyBuds: isBuds,
+                isSystemConnected: connected
             )
             results.append(discovered)
             onDeviceDiscovered?(discovered)
@@ -206,12 +321,16 @@ final class BluetoothManager: NSObject, ObservableObject {
     }
 
     func findPairedGalaxyBudsDevice() -> DiscoveredDevice? {
-        return findPairedGalaxyBuds().first(where: { $0.isGalaxyBuds })
+        return findPairedGalaxyBuds().first(where: \.canAttach)
     }
 
     // MARK: - Connection via RFCOMM (Non-blocking background queue)
 
-    func connectToDevice(address: String, requireSystemConnected: Bool = false) {
+    func connectToDevice(address: String, profile: BudsConnectionProfile) {
+        guard profile.canConnect else {
+            rejectConnection("This Galaxy Buds model does not have a supported configuration protocol yet.")
+            return
+        }
         guard isBluetoothAvailable else {
             updateState(.error(statusMessage.isEmpty ? "Bluetooth is unavailable. Turn it on and allow access in System Settings." : statusMessage))
             return
@@ -234,9 +353,32 @@ final class BluetoothManager: NSObject, ObservableObject {
             ProtocolLogger.log(.warning, "IOBluetoothDevice(addressString:) returned nil for \(address)")
             return
         }
+        let cachedName = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice])?
+            .first(where: { $0.addressString == address })?.name
+        let isBuds = DiscoveredDevice.isGalaxyBudsName(device.name ?? cachedName ?? "")
+            || address == DevicePersistence.lastDeviceAddress
+        guard isBuds else {
+            rejectConnection("The connected Bluetooth device is not recognized as Galaxy Buds.")
+            return
+        }
+        let identifiedProfile = BudsConnectionProfile.identify(
+            name: device.name ?? cachedName ?? "",
+            rememberedAddress: address == DevicePersistence.lastDeviceAddress)
+        guard profile == identifiedProfile else {
+            rejectConnection("Galaxy Buds model changed. Scan again before attaching.")
+            return
+        }
+
+        // SDP and RFCOMM may create a baseband link themselves. Never call
+        // either when macOS does not already have this device connected.
+        guard isDeviceConnected(address: address) else {
+            rejectConnection("Connect the earbuds in macOS Bluetooth settings first.")
+            return
+        }
 
         closeCurrentChannel()
         attemptGeneration += 1
+        targetProfile = profile
         let deviceName = device.name ?? "Galaxy Buds"
         connectedDevice = device
 
@@ -246,15 +388,6 @@ final class BluetoothManager: NSObject, ObservableObject {
             updateState(.disconnected)
             setStatus(msg)
             ProtocolLogger.log(.warning, "Device not paired: \(address)")
-            return
-        }
-
-        // Passive attaches must never pull the earbuds to this Mac. If the
-        // system-level link dropped (or never existed), stay disconnected.
-        if requireSystemConnected && !device.isConnected() {
-            ProtocolLogger.log(.info, "Passive attach skipped for \(address): no system-level connection")
-            isConnecting = false
-            updateState(.disconnected)
             return
         }
 
@@ -272,7 +405,11 @@ final class BluetoothManager: NSObject, ObservableObject {
             currentChannelIndex = 0
             tryNextChannel()
         } else {
-            setStatus("Discovering the Buds2 Pro configuration service…")
+            guard isDeviceConnected(address: address) else {
+                failConnection("The macOS Bluetooth connection was lost before service discovery.")
+                return
+            }
+            setStatus("Discovering the Galaxy Buds configuration service…")
             let result = device.performSDPQuery(self)
             guard result == kIOReturnSuccess else { failConnection("Bluetooth service discovery failed (\(result))."); return }
             let generation = attemptGeneration
@@ -285,7 +422,7 @@ final class BluetoothManager: NSObject, ObservableObject {
     }
 
     private func serviceChannel(_ device: IOBluetoothDevice) -> UInt8? {
-        var uuid = UUID(uuidString: BudsConstants.sppNewUuid)!.uuid
+        var uuid = UUID(uuidString: targetProfile.serviceUUID)!.uuid
         let serviceUUID = withUnsafeBytes(of: &uuid) { IOBluetoothSDPUUID(bytes: $0.baseAddress, length: 16) }
         guard let service = device.getServiceRecord(for: serviceUUID) else { return nil }
         var channel: BluetoothRFCOMMChannelID = 0
@@ -296,8 +433,12 @@ final class BluetoothManager: NSObject, ObservableObject {
     @objc func sdpQueryComplete(_ device: IOBluetoothDevice!, status: IOReturn) {
         guard isConnecting, !cancelRequested, let device, device == targetDevice, rfcommChannel == nil else { return }
         channelOpenTimeoutTask?.cancel()
+        guard isDeviceConnected(address: device.addressString ?? "") else {
+            failConnection("The macOS Bluetooth connection was lost during service discovery.")
+            return
+        }
         guard status == kIOReturnSuccess, let channel = serviceChannel(device) else {
-            failConnection("The Buds2 Pro configuration service is unavailable. Connect the earbuds to this Mac and try again.")
+            failConnection("The Galaxy Buds configuration service is unavailable. Connect the earbuds to this Mac and try again.")
             return
         }
         candidateChannels = [channel]
@@ -322,6 +463,11 @@ final class BluetoothManager: NSObject, ObservableObject {
         updateState(.error(message))
     }
 
+    private func rejectConnection(_ message: String) {
+        setStatus(message)
+        updateState(.error(message))
+    }
+
     private var candidateChannels: [UInt8] = []
     private var currentChannelIndex: Int = 0
     private var targetDevice: IOBluetoothDevice?
@@ -330,6 +476,10 @@ final class BluetoothManager: NSObject, ObservableObject {
     private func tryNextChannel() {
         channelOpenTimeoutTask?.cancel()
         guard isConnecting, !cancelRequested, let device = targetDevice else { return }
+        guard isDeviceConnected(address: device.addressString ?? "") else {
+            failConnection("The macOS Bluetooth connection was lost before opening the settings channel.")
+            return
+        }
 
         guard currentChannelIndex < candidateChannels.count else {
             failConnection("Could not open the configuration channel. Open the case and ensure the earbuds are connected to this Mac.")
@@ -361,7 +511,7 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     func isDeviceConnected(address: String) -> Bool {
         if let dev = IOBluetoothDevice(addressString: address) {
-            return dev.isConnected()
+            return SystemBluetoothConnection.isConnected(dev)
         }
         return false
     }
@@ -463,7 +613,7 @@ extension BluetoothManager: IOBluetoothRFCOMMChannelDelegate {
             if error == kIOReturnSuccess {
                 let ch = channel
                 guard let dev = ch.getDevice() ?? self.targetDevice ?? self.connectedDevice else { return }
-                self.setupChannel(ch, device: dev, deviceName: dev.name ?? "Galaxy Buds2 Pro")
+                self.setupChannel(ch, device: dev, deviceName: dev.name ?? "Galaxy Buds")
             } else {
                 if self.isConnecting {
                     self.tryNextChannel()

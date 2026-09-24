@@ -1,17 +1,19 @@
 # Galaxy Buds2 Pro Manager for macOS
 
-A native menu-bar manager for Samsung Galaxy Buds2 Pro (SM-R510), requiring macOS 14 or newer. This is a macOS companion, not an Android application or a complete replacement for Galaxy Wearable.
+A native menu-bar manager for Samsung Galaxy Buds, requiring macOS 14 or newer. Galaxy Buds2 Pro (SM-R510) has the full set of controls. Other recognized non-legacy models have an experimental battery-only mode; their settings controls are disabled until model-specific protocols are verified. This is a macOS companion, not an Android application or a complete replacement for Galaxy Wearable.
 
 ## Connect
 
 1. Pair the earbuds in **System Settings → Bluetooth**.
 2. Open their case or wear them, and allow the app Bluetooth access.
 3. Launch the menu-bar app and click the earbuds icon. Connect the earbuds to this Mac in **System Settings → Bluetooth** (or via the Control Center); the app attaches automatically as soon as macOS connects them.
-4. To attach without using System Settings first, select **Connect** in the menu. The app never reconnects on its own — connection is always driven by macOS or an explicit Connect action.
+4. The **Attach** action only works after macOS shows the earbuds as connected. Connect the Bluetooth device in macOS first.
 
-Discovery uses macOS paired devices and system connection notifications. Configuration uses the Samsung service UUID `2e73a4ad-332d-41fc-90e2-16bef06523f2`, resolved through SDP. Audio remains managed by macOS. Renamed earbuds are remembered by address after a successful connection; unrelated Buds models are excluded from automatic name matching.
+Discovery uses macOS paired devices and system connection notifications. Configuration resolves the model's Samsung service UUID through SDP: the newer UUID `2e73a4ad-332d-41fc-90e2-16bef06523f2` or standard SPP for Buds+, Buds Live, and Buds Pro. Audio remains managed by macOS. A renamed Buds2 Pro is remembered by address after a successful connection. Other Galaxy Buds names are shown in the paired-device list; models with an unverified protocol are labeled and cannot be opened by the app.
 
-The app is passive with respect to Bluetooth: it never initiates or retries connections in the background. If the earbuds are connected to another device (e.g. a phone), or you disconnect them manually, the app stays idle until macOS connects them to this Mac again. Bluetooth power changes and sleep/wake only re-check whether macOS already has the earbuds connected. Settings remain disabled until a valid extended device snapshot arrives. Commands update the UI when the earbuds confirm them; timeouts and Bluetooth errors are shown in the menu.
+The app classifies each macOS Bluetooth connection notification using the device's cached name or model code, then attaches only to recognized Galaxy Buds on an existing system connection. It never intentionally initiates or retries a Bluetooth connection to a disconnected device; manual Attach also requires an existing system connection. If the earbuds are connected to another device (e.g. a phone), or you disconnect them manually, the app stays idle until macOS connects them to this Mac again. Bluetooth power changes and sleep/wake only re-check whether macOS already has the earbuds connected. Buds2 Pro settings remain disabled until a valid extended device snapshot arrives. Battery-only profiles send no setting commands and display only the shared battery and placement fields from incoming status messages. Commands on Buds2 Pro update the UI when the earbuds confirm them; timeouts and Bluetooth errors are shown in the menu.
+
+Settings → Bluetooth shows the most recently observed device name and whether the app recognized it as Galaxy Buds. Identification uses locally cached Bluetooth information; a renamed model with no recognizable name or remembered address may be shown as an unrelated device.
 
 ## Controls
 
@@ -31,7 +33,7 @@ The connected-device menu shows battery levels, a quick ANC/Ambient/Off switch, 
 
 Samsung-specific host features (360 Audio rendering, SSC codec, notification reading, SmartThings location finding) are not implemented by this Mac app. Firmware updates and rename still require Galaxy Wearable. Unsupported adaptive-volume and one-earbud media-pause toggles were removed rather than presented as functioning settings. Spotify/assistant touch actions depend on the connected host. Protocol support alone does not guarantee a feature's effect on macOS audio.
 
-See [the capability and validation notes](Docs/CAPABILITY_MATRIX.md) for the distinction between implemented, physically checked, and unverified functionality.
+See [the capability and validation notes](Docs/CAPABILITY_MATRIX.md) for the model support levels and the distinction between implemented, physically checked, and unverified functionality.
 
 ## Build and run
 
@@ -47,9 +49,9 @@ This incrementally builds, bundles, ad-hoc signs, and launches the app. It check
 ./build_app.sh
 ```
 
-The installer is written to `dist/GalaxyBuds2-Pro-Manager.dmg`; the app bundle is at `.build/Galaxy Buds2 Pro Manager.app`. Open the DMG and drag the app to Applications.
+The release deliverables are `dist/Galaxy Buds2 Pro Manager.app` and `dist/GalaxyBuds2-Pro-Manager.dmg`. Open the DMG and drag the app to Applications. `.build/` contains disposable compiler output and packaging staging. `./run.sh` uses a temporary debug app in `.build/` and does not replace the release app in `dist/`.
 
-`SDKROOT`, `SWIFT_BUILD_PATH`, `CONFIGURATION` (debug/release), and `SKIP_DMG=1` are supported build overrides. If the active SDK or debug-symbol generator causes a build failure, select an installed SDK and optionally omit debug symbols with `GBM_DEBUG_INFO_FORMAT=none`:
+`SDKROOT`, `SWIFT_BUILD_PATH`, `CONFIGURATION` (debug/release), `APP_OUTPUT_DIR`, and `SKIP_DMG=1` are supported build overrides. If the active SDK or debug-symbol generator causes a build failure, select an installed SDK and optionally omit debug symbols with `GBM_DEBUG_INFO_FORMAT=none`:
 
 ```sh
 SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \

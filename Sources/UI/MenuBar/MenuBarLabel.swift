@@ -43,10 +43,11 @@ struct MenuBarLabel: View {
     private var accessibilityDescription: String {
         switch appState.deviceState.connectionState {
         case .connected:
+            let name = appState.deviceState.deviceName
             if let avg = appState.deviceState.averageBattery {
-                return "Galaxy Buds2 Pro connected, \(avg)% battery"
+                return "\(name) connected, \(avg)% battery"
             }
-            return "Galaxy Buds2 Pro connected"
+            return "\(name) connected"
         case .scanning:
             return "Scanning for Galaxy Buds"
         case .connecting:
@@ -56,7 +57,7 @@ struct MenuBarLabel: View {
         case .error:
             return "Bluetooth error"
         default:
-            return "Galaxy Buds2 Pro disconnected"
+            return "Galaxy Buds disconnected"
         }
     }
 }

@@ -7,17 +7,20 @@ APP_NAME="Galaxy Buds2 Pro Manager"
 EXEC_NAME="GalaxyBudsManager"
 BUNDLE_ID="com.galaxybudsmanager.app"
 VERSION="1.0.0"
-BUILD_DIR=".build"
 CONFIGURATION="${CONFIGURATION:-release}"
 SWIFT_ARGS=(--disable-sandbox --configuration "$CONFIGURATION")
 if [ -n "${SWIFT_BUILD_PATH:-}" ]; then SWIFT_ARGS+=(--scratch-path "$SWIFT_BUILD_PATH"); fi
 if [ -n "${SDKROOT:-}" ]; then SWIFT_ARGS+=(--sdk "$SDKROOT"); fi
 if [ -n "${GBM_DEBUG_INFO_FORMAT:-}" ]; then SWIFT_ARGS+=(-debug-info-format "$GBM_DEBUG_INFO_FORMAT"); fi
-APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
-DMG_NAME="$BUILD_DIR/GalaxyBuds2-Pro-Manager"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
+BUILD_DIR="$SCRIPT_DIR/.build"
+DIST_DIR="$SCRIPT_DIR/dist"
+APP_OUTPUT_DIR="${APP_OUTPUT_DIR:-$DIST_DIR}"
+APP_BUNDLE="$APP_OUTPUT_DIR/$APP_NAME.app"
+DMG_FINAL="$DIST_DIR/GalaxyBuds2-Pro-Manager.dmg"
+mkdir -p "$BUILD_DIR" "$APP_OUTPUT_DIR" "$DIST_DIR"
 
 echo "═══════════════════════════════════════════════════════"
 echo "  Galaxy Buds2 Pro Manager — Build Script"
@@ -93,13 +96,12 @@ if [ "${SKIP_DMG:-0}" = 1 ]; then
     exit 0
 fi
 
-# ── Step 7: Create DMG ────────────────────────────────────────
+# ── Step 6: Create DMG ────────────────────────────────────────
 echo ""
 echo "▶ Step 6: Creating DMG..."
 
 DMG_TEMP="$BUILD_DIR/dmg-staging"
-DMG_FINAL="$DMG_NAME.dmg"
-rm -rf "$DMG_TEMP" "$DMG_FINAL" "$DMG_NAME"*.dmg 2>/dev/null
+rm -rf "$DMG_TEMP" "$DMG_FINAL"
 mkdir -p "$DMG_TEMP"
 cp -R "$APP_BUNDLE" "$DMG_TEMP/"
 
@@ -118,17 +120,9 @@ hdiutil create \
 rm -rf "$DMG_TEMP"
 echo "   ✓ DMG created: $DMG_FINAL ($(du -h "$DMG_FINAL" | cut -f1))"
 
-# ── Step 8: Copy DMG to dist/ for easy access ────────────────
+# ── Step 7: Cleanup ───────────────────────────────────────────
 echo ""
-echo "▶ Step 7: Copying DMG to dist/..."
-DIST_DIR="$SCRIPT_DIR/dist"
-mkdir -p "$DIST_DIR"
-cp "$DMG_FINAL" "$DIST_DIR/$(basename "$DMG_FINAL")"
-echo "   ✓ DMG copied to: $DIST_DIR/$(basename "$DMG_FINAL")"
-
-# ── Step 9: Cleanup ───────────────────────────────────────────
-echo ""
-echo "▶ Step 8: Cleaning up temp iconset..."
+echo "▶ Step 7: Cleaning up temp iconset..."
 rm -rf "$ICONSET_DIR"
 
 # ── Done ──────────────────────────────────────────────────────
@@ -138,7 +132,7 @@ echo "  BUILD COMPLETE"
 echo "═══════════════════════════════════════════════════════"
 echo ""
 echo "  App Bundle: $APP_BUNDLE"
-echo "  DMG:        $DIST_DIR/$(basename "$DMG_FINAL")"
+echo "  DMG:        $DMG_FINAL"
 echo ""
 echo "  To install:"
 echo "    1. Open the DMG"

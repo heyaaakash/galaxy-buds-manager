@@ -174,9 +174,10 @@ struct MenuBarMenu: View {
             // Show paired devices
             if appState.hasPairedDevices {
                 ForEach(appState.availablePairedDevices) { device in
-                    Button("Connect to \(device.name)") {
+                    Button("Attach to \(device.name)") {
                         Task { await appState.connectToPairedDevice(device) }
                     }
+                    .disabled(!device.canAttach)
                 }
                 Divider()
             }

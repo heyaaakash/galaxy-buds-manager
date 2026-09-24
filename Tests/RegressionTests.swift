@@ -321,8 +321,69 @@ struct RegressionTests {
     @MainActor @Test func deviceIdentification() {
         #expect(DiscoveredDevice.isGalaxyBudsName("Galaxy Buds2 Pro"))
         #expect(DiscoveredDevice.isGalaxyBudsName("Galaxy Buds 2 Pro (ABCD)"))
-        #expect(!DiscoveredDevice.isGalaxyBudsName("Galaxy Buds3 Pro"))
+        #expect(DiscoveredDevice.isGalaxyBudsName("Galaxy Buds3 Pro"))
+        #expect(BudsConnectionProfile.identify(name: "Galaxy Buds2 Pro") == .buds2Pro)
+        #expect(BudsConnectionProfile.identify(name: "Galaxy Buds Pro") == .basicStandardSPP)
+        #expect(BudsConnectionProfile.identify(name: "Galaxy Buds2") == .basicNewSPP)
+        #expect(BudsConnectionProfile.identify(name: "Galaxy Buds3 Pro") == .basicNewSPP)
+        #expect(BudsConnectionProfile.identify(name: "Galaxy Buds") == .unsupported)
+        #expect(BudsConnectionProfile.basicStandardSPP.serviceUUID == BudsConstants.sppUuid)
+        #expect(BudsConnectionProfile.basicNewSPP.serviceUUID == BudsConstants.sppNewUuid)
+        #expect(BudsConnectionProfile.identify(name: "My renamed earbuds", rememberedAddress: true) == .buds2Pro)
         #expect(!DiscoveredDevice.isGalaxyBudsName("Someone's Buds"))
+        let connectedBuds = DiscoveredDevice(id: "AA:BB", name: "Galaxy Buds2 Pro", rssi: 0,
+                                             isGalaxyBuds: true, isSystemConnected: true)
+        let disconnectedBuds = DiscoveredDevice(id: "AA:BB", name: "Galaxy Buds2 Pro", rssi: 0,
+                                                isGalaxyBuds: true, isSystemConnected: false)
+        let otherDevice = DiscoveredDevice(id: "CC:DD", name: "Other headphones", rssi: 0,
+                                           isGalaxyBuds: false, isSystemConnected: true)
+        #expect(connectedBuds.canAttach)
+        #expect(!disconnectedBuds.canAttach)
+        #expect(!otherDevice.canAttach)
+    }
+
+    @Test func connectedAudioDeviceAddress() {
+        #expect(SystemBluetoothConnection.addressFromAudioUID("AA-BB-CC-DD-EE-FF:output") == "AABBCCDDEEFF")
+        #expect(SystemBluetoothConnection.addressFromAudioUID("aa-bb-cc-dd-ee-ff:input") == "AABBCCDDEEFF")
+        #expect(SystemBluetoothConnection.normalizedAddress("aa:bb:cc:dd:ee:ff") == "AABBCCDDEEFF")
+        #expect(SystemBluetoothConnection.addressFromAudioUID("Built-in Output") == nil)
+    }
+
+    @Test func basicStatusPrefixAndTruncation() throws {
+        let state = DeviceState()
+        let basic: [UInt8] = [1, 71, 64, 1, 0, 0x12, 88]
+        try BasicBudsStatusDecoder(payload: basic, extended: false).apply(to: state)
+        #expect(state.batteryLeft.level == 71)
+        #expect(state.batteryRight.level == 64)
+        #expect(state.batteryCase.level == 88)
+        #expect(state.wearingLeft == .wearing)
+        #expect(state.wearingRight == .notWearing)
+        #expect(throws: BudsError.self) {
+            try BasicBudsStatusDecoder(payload: Array(basic.dropLast()), extended: false)
+        }
+    }
+
+    @MainActor @Test func basicModelReceivesBatteryWithoutSendingCommands() async {
+        let state = DeviceState()
+        state.connectionState = .connected
+        let proto = BudsProtocol(deviceState: state)
+        var sent = [[UInt8]]()
+        await proto.start(profile: .basicNewSPP) { sent.append($0); return true }
+        await proto.requestInitialState()
+        var payload = [UInt8](repeating: 0, count: 25)
+        payload[0] = 5
+        payload[2] = 82
+        payload[3] = 67
+        payload[6] = 0x12
+        payload[7] = 91
+        proto.processData(BudsMessage.response(.extendedStatusUpdated, payload: payload).encode())
+        #expect(state.batteryLeft.level == 82)
+        #expect(state.batteryRight.level == 67)
+        #expect(state.batteryCase.level == 91)
+        #expect(state.hasReceivedStatus)
+        await proto.setEqualizer(preset: .dynamic)
+        #expect(sent.isEmpty)
+        proto.stop()
     }
 }
 #endif

@@ -1,4 +1,19 @@
-# Buds2 Pro compatibility and validation
+# Galaxy Buds compatibility and validation
+
+## Model support
+
+| Models | Current behavior | Validation |
+|---|---|---|
+| Galaxy Buds2 Pro (SM-R510) | Full existing controls and diagnostics | Physically checked on one device; details below |
+| Galaxy Buds+, Buds Live, Buds Pro | Standard SPP connection; incoming battery and placement only | Based on the shared status prefix in GalaxyBudsClient; no physical device test in this project |
+| Galaxy Buds2, Buds FE, Buds3, Buds3 Pro | New Samsung SPP connection; incoming battery and placement only | Based on the shared status prefix in GalaxyBudsClient; no physical device test in this project |
+| Original Galaxy Buds and other models | Detected by name, with connection disabled | Their framing or status behavior needs a separate implementation |
+
+Battery-only profiles do not send handshakes, acknowledgements, or setting commands. They rely on an incoming status notification after the RFCOMM channel opens. If the model needs an active handshake, the app will connect but show no battery data. Connecting and status delivery must be tested on actual hardware before claiming verified support. Model names are used to choose a profile, so renamed non-SM-R510 earbuds may need their original Bluetooth name to be recognized.
+
+The model-specific service UUIDs and shared status prefix were cross-checked against [GalaxyBudsClient device specifications](https://github.com/timschneeb/GalaxyBudsClient/tree/master/GalaxyBudsClient/Model/Specifications), [basic status decoder](https://github.com/timschneeb/GalaxyBudsClient/blob/master/GalaxyBudsClient/Message/Decoder/StatusUpdateDecoder.cs), and [extended status decoder](https://github.com/timschneeb/GalaxyBudsClient/blob/master/GalaxyBudsClient/Message/Decoder/ExtendedStatusUpdateDecoder.cs).
+
+## Buds2 Pro full-control profile
 
 Target: Samsung SM-R510, macOS 14+. The device's extended-status revision determines optional fields; unknown newer tails are ignored and truncated mandatory fields are rejected.
 
@@ -8,7 +23,8 @@ Target: Samsung SM-R510, macOS 14+. The device's extended-status revision determ
 |---|---|
 | Detection | Paired Buds2 Pro names, saved address, macOS connect notification; no pairing bypass |
 | Connection | Samsung configuration-service UUID via SDP; asynchronous channel opening with timeout and stale-callback rejection |
-| Attachment model | Passive: attaches only when macOS natively connects the earbuds (startup, wake, Bluetooth power-on, system connect notification); never initiates or retries connections itself; manual Connect remains available |
+| Attachment model | Classifies every macOS classic Bluetooth connect notification from cached device information; attaches only after macOS reports a supported Buds model connected. Manual Attach has the same requirement. SDP and RFCOMM are checked against the live system connection immediately before use. |
+
 | Battery | L/R/case, unavailable levels shown as unknown; charging from extended revision 11+ or basic status revision 1+ |
 | Noise control | Off / ANC / ambient; universal ACK or matching noise notification confirms a change |
 | Ambient | Base volume 0–2; extra-high option revision 13+, extra step 3; customization per side and tone |
@@ -24,6 +40,8 @@ Target: Samsung SM-R510, macOS 14+. The device's extended-status revision determ
 | Information | Compact firmware decode, fixed-width earbud/cradle serials, colors, raw diagnostics, cycle counts |
 | Device actions | Reset/reboot/power off require explicit UI confirmation; not automatically retried |
 | Logs | Synchronized bounded storage, text/JSON export, RX-only replay extraction |
+
+Apple documents that [SDP](https://developer.apple.com/documentation/iobluetooth/iobluetoothdevice/performsdpquery%28_%3A%29) and [RFCOMM](https://developer.apple.com/documentation/iobluetooth/iobluetoothdevice/openrfcommchannelasync%28_%3Awithchannelid%3Adelegate%3A%29) can establish a Bluetooth baseband link if it has dropped. The checks above prevent deliberate connection attempts to disconnected devices, but a disconnect between the final check and the framework call is still possible. Avoiding that race entirely would require disabling the settings channel and therefore live Buds status and controls.
 
 ## Not implemented as Mac features
 

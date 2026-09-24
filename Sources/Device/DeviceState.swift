@@ -180,11 +180,11 @@ enum ConnectionState: CustomStringConvertible, Sendable, Equatable {
 
     var description: String {
         switch self {
-        case .disconnected:            return "Galaxy Buds2 Pro unavailable"
+        case .disconnected:            return "Galaxy Buds unavailable"
         case .scanning:                return "Scanning for Galaxy Buds..."
         case .connecting:              return "Connecting…"
         case .reconnecting(let n):      return "Reconnecting… (attempt \(n))"
-        case .connected:               return "● Galaxy Buds2 Pro"
+        case .connected:               return "● Galaxy Buds"
         case .disconnecting:           return "Disconnecting…"
         case .error(let msg):          return "Error: \(msg)"
         }
