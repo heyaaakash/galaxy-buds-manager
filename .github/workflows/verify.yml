@@ -1,0 +1,27 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Protocol tests
+        run: swift test
+      - name: Package local app
+        run: ./build_app.sh
+      - name: Verify package
+        run: |
+          codesign --verify --deep --strict "dist/Galaxy Buds2 Pro Manager.app"
+          plutil -lint "dist/Galaxy Buds2 Pro Manager.app/Contents/Info.plist"
+          hdiutil verify "dist/GalaxyBuds2-Pro-Manager.dmg"

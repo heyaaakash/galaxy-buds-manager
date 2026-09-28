@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a problem with detection, battery data, or controls
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the capability matrix before reporting a model as supported. Remove Bluetooth addresses, serial numbers, and other personal data from screenshots and logs.
+  - type: input
+    id: model
+    attributes:
+      label: Galaxy Buds model number
+      placeholder: "For example, SM-R510"
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: If available
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac architecture
+      placeholder: "For example, macOS 15.5 on Apple Silicon"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include what macOS Bluetooth showed before opening the app.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs or screenshots
+      description: Optional. Review exports for addresses and serial numbers before sharing.

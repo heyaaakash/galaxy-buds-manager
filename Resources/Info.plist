@@ -27,9 +27,9 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>Galaxy Buds2 Pro Manager needs Bluetooth to discover and connect to your Galaxy Buds2 Pro earbuds.</string>
+    <string>Galaxy Buds Manager needs Bluetooth to discover and communicate with paired Galaxy Buds that are already connected to this Mac.</string>
     <key>NSBluetoothPeripheralUsageDescription</key>
-    <string>Galaxy Buds2 Pro Manager needs Bluetooth to communicate with your Galaxy Buds2 Pro earbuds.</string>
+    <string>Galaxy Buds Manager needs Bluetooth to read status from paired Galaxy Buds that are already connected to this Mac.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>

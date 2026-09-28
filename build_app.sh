@@ -5,8 +5,8 @@ set -euo pipefail
 
 APP_NAME="Galaxy Buds2 Pro Manager"
 EXEC_NAME="GalaxyBudsManager"
-BUNDLE_ID="com.galaxybudsmanager.app"
-VERSION="1.0.0"
+VERSION="$(tr -d '\n' < "$(dirname "$0")/VERSION")"
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
 CONFIGURATION="${CONFIGURATION:-release}"
 SWIFT_ARGS=(--disable-sandbox --configuration "$CONFIGURATION")
 if [ -n "${SWIFT_BUILD_PATH:-}" ]; then SWIFT_ARGS+=(--scratch-path "$SWIFT_BUILD_PATH"); fi
@@ -83,7 +83,9 @@ echo "   ✓ menubar-icon.png copied"
 echo ""
 echo "▶ Step 5: Writing Info.plist..."
 cp "Resources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
-echo "   ✓ Info.plist written"
+plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP_BUNDLE/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$APP_BUNDLE/Contents/Info.plist"
+echo "   ✓ Info.plist written (version $VERSION, build $BUILD_NUMBER)"
 
 # ── Step 6: Create PkgInfo ────────────────────────────────────
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"

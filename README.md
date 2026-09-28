@@ -1,6 +1,22 @@
-# Galaxy Buds2 Pro Manager for macOS
+# Galaxy Buds Manager for macOS
 
 A native menu-bar manager for Samsung Galaxy Buds, requiring macOS 14 or newer. Galaxy Buds2 Pro (SM-R510) has the full set of controls. Other recognized non-legacy models have an experimental battery-only mode; their settings controls are disabled until model-specific protocols are verified. This is a macOS companion, not an Android application or a complete replacement for Galaxy Wearable.
+
+This is an independent, unofficial project and is not affiliated with Samsung. The locally built app bundle still uses the name **Galaxy Buds2 Pro Manager**.
+
+## Support at a glance
+
+| Model | Current support | Hardware validation |
+|---|---|---|
+| Galaxy Buds2 Pro (SM-R510) | Battery, settings controls, and diagnostics | Tested on one device; individual features have different validation levels |
+| Galaxy Buds+, Buds Live, Buds Pro, Buds2, Buds FE, Buds3, Buds3 Pro | Experimental incoming battery and placement display only | Not tested on physical devices in this project |
+| Original Galaxy Buds and other models | Detection only; app connection disabled | Not supported |
+
+See the [capability matrix](Docs/CAPABILITY_MATRIX.md) before relying on a feature. Recognition of a model does not guarantee that it will deliver status data.
+
+## Availability
+
+The repository currently provides **source code**, not a signed public app download. The local packaging script creates an ad-hoc-signed app and DMG for development; they are not notarized for distribution. A public macOS download will follow after Developer ID signing, notarization, and testing on the supported Mac architectures.
 
 ## Connect
 
@@ -37,19 +53,26 @@ See [the capability and validation notes](Docs/CAPABILITY_MATRIX.md) for the mod
 
 ## Build and run
 
-With a working Swift toolchain / macOS SDK:
+Clone this repository on a Mac with macOS 14 or newer and a working Swift toolchain / macOS SDK:
+
+```sh
+git clone https://github.com/heyaaakash/galaxy-buds-manager.git
+cd galaxy-buds-manager
+```
+
+For a local debug build:
 
 ```sh
 ./run.sh
 ```
 
-This incrementally builds, bundles, ad-hoc signs, and launches the app. It checks source changes before launch. To build a release app and DMG:
+This incrementally builds, bundles, ad-hoc signs, and launches the app. It checks source changes before launch. To package a local app and DMG:
 
 ```sh
 ./build_app.sh
 ```
 
-The release deliverables are `dist/Galaxy Buds2 Pro Manager.app` and `dist/GalaxyBuds2-Pro-Manager.dmg`. Open the DMG and drag the app to Applications. `.build/` contains disposable compiler output and packaging staging. `./run.sh` uses a temporary debug app in `.build/` and does not replace the release app in `dist/`.
+The local packaging outputs are `dist/Galaxy Buds2 Pro Manager.app` and `dist/GalaxyBuds2-Pro-Manager.dmg`. Open the DMG and drag the app to Applications. `.build/` contains disposable compiler output and packaging staging. `./run.sh` uses a temporary debug app in `.build/` and does not replace the app in `dist/`. Generated packages are ignored by Git. The app version comes from `VERSION`; `BUILD_NUMBER` can override the default bundle build number.
 
 `SDKROOT`, `SWIFT_BUILD_PATH`, `CONFIGURATION` (debug/release), `APP_OUTPUT_DIR`, and `SKIP_DMG=1` are supported build overrides. If the active SDK or debug-symbol generator causes a build failure, select an installed SDK and optionally omit debug symbols with `GBM_DEBUG_INFO_FORMAT=none`:
 
@@ -77,6 +100,14 @@ swift test --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
   -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing
 ```
 
-Enable protocol logging in Settings → Advanced, or launch the bundle with `--protocol-log` for session-only diagnostic output. Logs are bounded in memory and available in the menu; export explicitly to save them. Logs can include device addresses and serial numbers, so review them before sharing.
+## Privacy and diagnostics
 
-Protocol facts were checked against [GalaxyBudsClient](https://github.com/timschneeb/GalaxyBudsClient), including its SM-R510 model specification, decoders, and command layouts. This app is not affiliated with Samsung.
+The app stores the last observed Buds name and Bluetooth address, plus local preferences, in macOS UserDefaults. It does not include telemetry or a network service. Protocol logging is optional and held in memory for the session unless you export it. Exported logs can contain device addresses and serial numbers; remove those before sharing a report.
+
+## Contributing and license
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for model-specific development and reporting guidance, and [the release checklist](Docs/RELEASING.md) for future signed downloads. The source is licensed under [GPL-3.0-only](LICENSE).
+
+Protocol facts were checked against [GalaxyBudsClient](https://github.com/timschneeb/GalaxyBudsClient), including its SM-R510 model specification, decoders, and command layouts. The Swift implementation in this repository was written for this app; the cited project is GPLv3-licensed.
+
+Copyright © 2026 Aakash Rohilla.
