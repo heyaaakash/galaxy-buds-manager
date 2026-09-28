@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check version and architecture
+        run: |
+          test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
+          test "$(uname -m)" = "${{ matrix.arch }}"
+      - name: Protocol tests
+        run: swift test
+      - name: Build and verify DMG
+        run: |
+          ./build_app.sh
+          codesign --verify --deep --strict "dist/Galaxy Buds2 Pro Manager.app"
+          plutil -lint "dist/Galaxy Buds2 Pro Manager.app/Contents/Info.plist"
+          test "$(lipo -archs 'dist/Galaxy Buds2 Pro Manager.app/Contents/MacOS/GalaxyBudsManager')" = "${{ matrix.arch }}"
+          hdiutil verify "dist/GalaxyBuds2-Pro-Manager.dmg"
+          cp "dist/GalaxyBuds2-Pro-Manager.dmg" "GalaxyBudsManager-$GITHUB_REF_NAME-macos-${{ matrix.arch }}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: GalaxyBudsManager-*.dmg
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dmg-*
+          path: release
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
+          test -f "release/GalaxyBudsManager-$GITHUB_REF_NAME-macos-arm64.dmg"
+          test -f "release/GalaxyBudsManager-$GITHUB_REF_NAME-macos-x86_64.dmg"
+          cd release
+          sha256sum ./*.dmg > SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" ./*.dmg ./SHA256SUMS.txt \
+            --title "Galaxy Buds Manager $GITHUB_REF_NAME" \
+            --notes-file "$GITHUB_WORKSPACE/Docs/RELEASE_NOTES.md" \
+            --verify-tag

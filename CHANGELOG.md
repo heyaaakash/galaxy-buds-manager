@@ -1,10 +1,12 @@
 # Changelog
 
-Changes are grouped by version. Git tags and published releases will use the `vMAJOR.MINOR.PATCH` form.
+Changes are grouped by version. Git tags and published releases use the `vMAJOR.MINOR.PATCH` form.
 
-## Unreleased
+## 1.0.0 — 2026-09-29
 
-- Prepared the standalone public source repository.
-- Added model-support and validation guidance.
+- First public standalone release of the macOS Galaxy Buds manager.
+- Added architecture-specific DMG downloads for Apple Silicon and Intel Macs.
+- Documented model support, physical-device validation, and the unsigned installation path.
+- Added protocol tests and automated build verification for both Mac architectures.
 
-The first downloadable macOS release is pending Developer ID signing, notarization, and installation testing.
+The downloadable app is ad-hoc signed and not notarized. See [release notes](Docs/RELEASE_NOTES.md).

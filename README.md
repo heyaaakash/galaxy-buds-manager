@@ -14,9 +14,13 @@ This is an independent, unofficial project and is not affiliated with Samsung. T
 
 See the [capability matrix](Docs/CAPABILITY_MATRIX.md) before relying on a feature. Recognition of a model does not guarantee that it will deliver status data.
 
-## Availability
+## Download and install
 
-The repository currently provides **source code**, not a signed public app download. The local packaging script creates an ad-hoc-signed app and DMG for development; they are not notarized for distribution. A public macOS download will follow after Developer ID signing, notarization, and testing on the supported Mac architectures.
+Download the latest DMG from [GitHub Releases](https://github.com/heyaaakash/galaxy-buds-manager/releases). Choose the `arm64` file for an Apple Silicon Mac or the `x86_64` file for an Intel Mac. Open the DMG and drag **Galaxy Buds2 Pro Manager** to Applications.
+
+These public builds are **ad-hoc signed and not notarized** because this project does not yet have an Apple Developer ID. macOS may block the first launch. If you trust this release, try opening the app, then go to **System Settings → Privacy & Security** and choose **Open Anyway** for it. Follow [Apple's instructions for opening an app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac). Do not disable Gatekeeper globally. Check the DMG against the release's `SHA256SUMS.txt` before installing. macOS 14 or newer is required.
+
+Only Galaxy Buds2 Pro has been tested on physical earbuds in this project; [other models remain experimental](Docs/CAPABILITY_MATRIX.md).
 
 ## Connect
 
@@ -81,7 +85,7 @@ SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
 GBM_DEBUG_INFO_FORMAT=none ./build_app.sh
 ```
 
-Run the app bundle rather than a bare `swift run` executable so macOS can associate Bluetooth permission with its bundle identity. The script uses the macOS `sips`, `iconutil`, `codesign`, and `hdiutil` tools. Its ad-hoc signature is for local use; the DMG is not notarized for distribution.
+Run the app bundle rather than a bare `swift run` executable so macOS can associate Bluetooth permission with its bundle identity. The script uses the macOS `sips`, `iconutil`, `codesign`, and `hdiutil` tools. Release DMGs use the same ad-hoc signing and are not notarized; see the installation steps above.
 
 ## Tests and diagnostics
 
@@ -106,7 +110,7 @@ The app stores the last observed Buds name and Bluetooth address, plus local pre
 
 ## Contributing and license
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for model-specific development and reporting guidance, and [the release checklist](Docs/RELEASING.md) for future signed downloads. The source is licensed under [GPL-3.0-only](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for model-specific development and reporting guidance, and [the release checklist](Docs/RELEASING.md) for publishing. The source is licensed under [GPL-3.0-only](LICENSE).
 
 Protocol facts were checked against [GalaxyBudsClient](https://github.com/timschneeb/GalaxyBudsClient), including its SM-R510 model specification, decoders, and command layouts. The Swift implementation in this repository was written for this app; the cited project is GPLv3-licensed.
 
