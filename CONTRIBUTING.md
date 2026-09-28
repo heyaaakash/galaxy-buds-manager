@@ -1,21 +1,7 @@
 # Contributing
 
-Thanks for helping improve Galaxy Buds support on macOS.
+Issues and pull requests are welcome. For a new earbud model or protocol command, open an issue first. Include the model number, firmware and macOS versions, and what you checked on physical hardware. Remove Bluetooth addresses, serial numbers, and other identifying data from logs before sharing them.
 
-## Before opening a change
+For code changes, run `swift test` and `./build_app.sh`. Keep protocol commands specific to each model; never send Buds2 Pro settings commands to another model. Attach only after macOS reports the earbuds connected, and recheck before SDP or RFCOMM calls. Update the [capability matrix](Docs/CAPABILITY_MATRIX.md) when support or validation changes; distinguish code based on protocol references from behavior tested on hardware.
 
-- Check the [capability matrix](Docs/CAPABILITY_MATRIX.md) for the model and feature involved.
-- Open an issue for a new model or wire command before implementing it. Include the model number, firmware version, macOS version, and what you verified on physical hardware.
-- Remove Bluetooth addresses, serial numbers, and other identifying data from logs before posting them.
-
-## Development
-
-This is a Swift Package targeting macOS 14 or newer. Run `swift test` for protocol regressions. Run `./build_app.sh` to package a local app and DMG. The script's default ad-hoc signature is for local testing; public downloads require Developer ID signing and notarization.
-
-Keep protocol handling specific to each model. Never send Buds2 Pro (SM-R510) setting commands to another model. Attach only after macOS reports that the device is connected, and recheck the system connection before SDP or RFCOMM calls. Tests should cover any new protocol framing, decoder, or command behavior.
-
-Update the capability matrix and README when support or validation changes. Distinguish code paths inferred from public protocol documentation from behavior checked on a physical device.
-
-## Pull requests
-
-Describe the affected model, evidence of hardware testing, user-visible behavior, and tests run. Avoid committing build output, DMGs, protocol logs, device identifiers, or signing material.
+In a pull request, describe the user-visible change, models affected, tests run, and any hardware checks. Do not commit build output, DMGs, logs, device identifiers, or signing credentials.
