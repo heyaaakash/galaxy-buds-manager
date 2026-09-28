@@ -5,6 +5,9 @@ Package.resolved
 # Swift build output
 .build/
 
+# Generated release packages (attach these to GitHub Releases)
+/dist/
+
 # Local tool metadata
 .freebuff/
 

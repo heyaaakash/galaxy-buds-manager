@@ -518,7 +518,7 @@ final class ConnectionStateAndBackoffTests: XCTestCase {
         let connected = ConnectionState.connected
         XCTAssertTrue(connected.isConnected)
         XCTAssertFalse(connected.isConnectingOrReconnecting)
-        XCTAssertEqual(connected.description, "● Galaxy Buds2 Pro")
+        XCTAssertEqual(connected.description, "● Galaxy Buds")
 
         let connecting = ConnectionState.connecting
         XCTAssertFalse(connecting.isConnected)
@@ -533,7 +533,7 @@ final class ConnectionStateAndBackoffTests: XCTestCase {
         let disconnected = ConnectionState.disconnected
         XCTAssertFalse(disconnected.isConnected)
         XCTAssertFalse(disconnected.isConnectingOrReconnecting)
-        XCTAssertEqual(disconnected.description, "Galaxy Buds2 Pro unavailable")
+        XCTAssertEqual(disconnected.description, "Galaxy Buds unavailable")
 
         let error = ConnectionState.error("Test timeout")
         XCTAssertEqual(error.errorDescription, "Test timeout")
@@ -623,4 +623,3 @@ final class TouchActionTests: XCTestCase {
 }
 
 #endif  // canImport(XCTest)
-
