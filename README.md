@@ -23,6 +23,14 @@
 
 An independent, unofficial native Swift app for macOS 14 or newer. It appears in macOS as **Galaxy Buds2 Pro Manager** and is not affiliated with Samsung.
 
+## Watch the launch video
+
+<p align="center">
+  <a href="brag-output-2026-09-29-140648/brag.mp4"><img src="brag-output-2026-09-29-140648/brag.jpg" alt="Watch the Galaxy Buds Manager launch video" width="720"></a>
+</p>
+
+<p align="center"><sub>Click to watch the 23-second video. The earbud close-up is illustrative; the app interface is a real capture.</sub></p>
+
 ## What you can do
 
 | At a glance | One-click controls | When you need more |

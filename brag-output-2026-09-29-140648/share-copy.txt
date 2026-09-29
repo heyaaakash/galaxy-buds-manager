@@ -1,0 +1,3 @@
+Your Buds2 Pro finally feel at home on your Mac. I built Galaxy Buds Manager to put battery levels and everyday controls one click from the menu bar.
+
+https://github.com/heyaaakash/galaxy-buds-manager
