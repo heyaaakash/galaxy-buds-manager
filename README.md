@@ -83,6 +83,8 @@ swift test
 
 Run the app bundle rather than a bare `swift run` executable so macOS can associate Bluetooth permission with the app. See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a code change.
 
+> **Note for maintainers:** Unreleased assets and version archives are stored in the companion submodule `PrivateAssets/`. Clone with `git clone --recurse-submodules` (or run `git submodule update --init --recursive`).
+
 ## Privacy and license
 
 The app stores the last observed Buds name and Bluetooth address plus preferences on your Mac. It has no telemetry or network service. Exported protocol logs may contain device addresses or serial numbers; remove those before sharing.
