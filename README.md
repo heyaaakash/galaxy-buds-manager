@@ -81,7 +81,7 @@ swift test
 ./build_app.sh    # Create an app and DMG in dist/
 ```
 
-Run the app bundle rather than a bare `swift run` executable so macOS can associate Bluetooth permission with the app. See [DEVELOPMENT.md](Docs/DEVELOPMENT.md) for multi-device setup and private assets, and [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a code change.
+Run the app bundle rather than a bare `swift run` executable so macOS can associate Bluetooth permission with the app. See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a code change.
 
 ## Privacy and license
 
