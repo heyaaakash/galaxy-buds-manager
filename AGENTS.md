@@ -7,3 +7,4 @@
 - `./run.sh` builds and launches a disposable debug app from `.build/`; it must not overwrite the release app in `dist/`.
 - Use `swift test` for protocol regressions. If the default macOS SDK or module cache fails, select an installed compatible SDK and place the module cache under `/private/tmp`.
 - Verify release builds with `codesign --verify --deep --strict` on the app, `plutil -lint` on its Info.plist, and `hdiutil verify` on the DMG. If sandboxed `iconutil` rejects a valid generated icon set, rerun the packaging script with the needed macOS tool access.
+- The `PrivateAssets/` directory is a private submodule (`heyaaakash/galaxy-buds-manager-private-assets`) for unreleased assets, private design files, and versioned build archives. When cloning on new devices, use `git clone --recurse-submodules` and configure `git config submodule.recurse true` and `git config push.recurseSubmodules on-demand`.
