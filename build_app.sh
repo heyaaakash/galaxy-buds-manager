@@ -16,7 +16,12 @@ if [ -n "${GBM_DEBUG_INFO_FORMAT:-}" ]; then SWIFT_ARGS+=(-debug-info-format "$G
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 BUILD_DIR="$SCRIPT_DIR/.build"
-DIST_DIR="$SCRIPT_DIR/dist"
+if [ -d "$SCRIPT_DIR/PrivateAssets" ] && [ -f "$SCRIPT_DIR/PrivateAssets/README.md" ]; then
+    DEFAULT_DIST_DIR="$SCRIPT_DIR/PrivateAssets/$VERSION"
+else
+    DEFAULT_DIST_DIR="$SCRIPT_DIR/dist"
+fi
+DIST_DIR="${DIST_DIR:-$DEFAULT_DIST_DIR}"
 APP_OUTPUT_DIR="${APP_OUTPUT_DIR:-$DIST_DIR}"
 APP_BUNDLE="$APP_OUTPUT_DIR/$APP_NAME.app"
 DMG_FINAL="$DIST_DIR/GalaxyBuds2-Pro-Manager.dmg"
